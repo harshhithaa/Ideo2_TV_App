@@ -6,7 +6,7 @@ import {
   SafeAreaView,
   Image,
   TouchableOpacity,
-  ToastAndroid
+  ToastAndroid,
 } from 'react-native';
 import React, {useState} from 'react';
 import axios from 'axios';
@@ -18,17 +18,18 @@ import {
 } from 'react-native-responsive-dimensions';
 
 //   import {checkVersion} from 'react-native-check-version';
-import Modal from 'react-native-modal';
+import {fetchscreenref} from '../services/Restaurant/actions';
 import logo from '../Assets/Logos/ideogram_logo.png';
 
 import FormInput from '../Components/FormInput/FormInput';
 import NetInfo from '@react-native-community/netinfo';
 import Button from '../Components/Button/Button';
 import AsyncStorage from '@react-native-community/async-storage';
+import {connect} from 'react-redux';
 // import {fetchscreenref} from '../services/Restaurant/actions';
 // import {updateOrder} from '../services/Restaurant/actions';
 
-export default function Test({navigation}) {
+const Test = ({navigation, fetchscreenref}) => {
   console.log('pavlo hanga');
   const {height, width} = useWindowDimensions();
 
@@ -41,33 +42,34 @@ export default function Test({navigation}) {
     const signIn = () => {
       NetInfo.fetch().then(isConnected => {
         if (isConnected.isConnected) {
-          axios
-            .post(
-              'http://139.59.80.152:3000/api/monitor/login',
-              {
-                MonitorUser: screen,
-                Password: password,
-              },
-              {
-                headers: {
-                  Authorization: 'TlozR28zTWNlSTp3YnB1MkpKQ3cy',
-                  AppVersion: '1.0.0',
-                },
-              },
-            )
-            .then((res) => {
-              
-              if(res.data.Error?.ErrorCode == 501){
-                ToastAndroid.show('Invalid Login Credentials', ToastAndroid.SHORT);
-                return
+          let payload = {
+            MonitorUser: screen,
+            Password: password,
+          };
+          fetchscreenref(payload, error => {
+            if (error != null) {
+              if (
+                error.err.ErrorCode == 10004 ||
+                error.err.ErrorCode == 10005
+              ) {
+                ToastAndroid.show(
+                  'Invalid Login Credentials',
+                  ToastAndroid.SHORT,
+                );
+                return;
               }
 
-              console.log('res', res.data);
-              AsyncStorage.setItem('AuthToken', res.data.Details.AuthToken)
-              AsyncStorage.setItem('MonitorRef', res.data.Details.MonitorRef)
-              navigation.replace('Main')
-
-            });
+              if (error.err.ErrorCode == 500) {
+                ToastAndroid.show(
+                  'Something Went Wrong Please Try Again',
+                  ToastAndroid.SHORT,
+                );
+                return;
+              }
+            } else {
+              navigation.replace('Main');
+            }
+          });
         } else {
           ToastAndroid.show('No Internet Connection', ToastAndroid.SHORT);
           this.setState({
@@ -107,19 +109,18 @@ export default function Test({navigation}) {
   };
 
   return (
-    <View style={{height:height, width:width, backgroundColor:'#fff'}}>
+    <View style={{height: height, width: width, backgroundColor: '#fff'}}>
       <Login />
     </View>
-    
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
     // backgroundColor: colors.primary,
-    backgroundColor:'#fff',
+    backgroundColor: '#fff',
     paddingHorizontal: '5%',
     // transform: [{rotate: '90deg'}]
   },
@@ -158,3 +159,12 @@ const styles = StyleSheet.create({
     marginTop: responsiveHeight(4),
   },
 });
+
+const mapDispatchToProps = dispatch => ({
+  updateOrder: (payload, callback) => dispatch(updateOrder(payload, callback)),
+
+  fetchscreenref: (payload, callback) =>
+    dispatch(fetchscreenref(payload, callback)),
+});
+
+export default connect(null, mapDispatchToProps)(Test);

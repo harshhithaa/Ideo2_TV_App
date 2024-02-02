@@ -11,39 +11,38 @@ import React from 'react';
 import {NavigationContainer} from '@react-navigation/native';
 import {createStackNavigator} from '@react-navigation/stack';
 
-
 // import type {Node} from 'react';
-import{
-  SafeAreaView,
-  StyleSheet,
-} from 'react-native';
-
+import {SafeAreaView, StyleSheet} from 'react-native';
 
 import Test from './src/Screens/Test';
 import SplashScreen from './src/Screens/SplashScreen';
+import Media from './src/Screens/Media';
 import Main from './src/Screens/Main';
+import {Provider} from 'react-redux';
+import store from './src/services/store';
 
 const App = () => {
-
   const Stack = createStackNavigator();
 
   return (
-
-    <NavigationContainer>
-    <Stack.Navigator
-      screenOptions={{headerShown: false, tabBarVisible: false}}
-      // headerMode="none"
-      initialRouteName={'SplashScreen'}>
-      <Stack.Screen
-        options={{tabBarVisible: false}}
-        name="SplashScreen"
-        component={SplashScreen}
-      />
-      <Stack.Screen name="Login" component={Test} />
-      {/* <Stack.Screen name="Login" component={Phone} /> */}
-      <Stack.Screen name="Main" component={Main} />
-    </Stack.Navigator>
-  </NavigationContainer>
+    <Provider store={store}>
+      <NavigationContainer>
+        <Stack.Navigator
+          screenOptions={{headerShown: false, tabBarVisible: false}}
+          // headerMode="none"
+          initialRouteName={'SplashScreen'}>
+          <Stack.Screen
+            options={{tabBarVisible: false}}
+            name="SplashScreen"
+            component={SplashScreen}
+          />
+          <Stack.Screen name="Login" component={Test} />
+          {/* <Stack.Screen name="Login" component={Phone} /> */}
+          <Stack.Screen name="Main" component={Media} />
+          <Stack.Screen name="Next" component={Main} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </Provider>
   );
 };
 

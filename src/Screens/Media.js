@@ -46,7 +46,7 @@ import convertToProxyURL from 'react-native-video-cache';
 
 // const slideWidth = wp(100);
 
-class Main extends Component {
+class Media extends Component {
   constructor() {
     super();
     this.state = {
@@ -76,7 +76,7 @@ class Main extends Component {
     KeepAwake.activate();
     this.interval = setInterval(() => this.getdta(), 10000);
     this.timeout = setTimeout(() => {
-      this.props.navigation.replace('Main');
+      this.props.navigation.replace('Next');
     }, 1800000);
   };
 
@@ -397,4 +397,4 @@ const mapDispatchToProps = dispatch => ({
   fetchItems: callback => dispatch(fetchItems(callback)),
 });
 
-export default connect(mapStateToProps, mapDispatchToProps)(Main);
+export default connect(mapStateToProps, mapDispatchToProps)(Media);

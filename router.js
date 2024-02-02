@@ -8,8 +8,8 @@ import {Dimensions, StatusBar} from 'react-native';
 import Phone from './src/Screens/SignIn';
 // import Media from './src/Screens/Media';
 import SplashScreen from './src/Screens/SplashScreen';
-import Main from './src/Screens/Main';
 import Test from './src/Screens/Test';
+import Media from './src/Screens/Media';
 
 // import Colors from './src/Assets/Colors/Colors';
 
@@ -20,7 +20,6 @@ const Stack = createStackNavigator();
 const screenHeight = Dimensions.get('screen').height;
 const windowHeight = Dimensions.get('window').height;
 // const navbarHeight = screenHeight - windowHeight + StatusBar.currentHeight;
-
 
 let stackNav = () => (
   <NavigationContainer>
@@ -35,7 +34,7 @@ let stackNav = () => (
       />
       <Stack.Screen name="Test" component={Test} />
       {/* <Stack.Screen name="Login" component={Phone} /> */}
-      <Stack.Screen name="Main" component={Main} />
+      <Stack.Screen name="Main" component={Media} />
     </Stack.Navigator>
   </NavigationContainer>
 );

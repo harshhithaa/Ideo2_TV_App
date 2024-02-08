@@ -102,7 +102,7 @@ class Media extends Component {
       [];
 
     if (items && items.length == 1) {
-      if (items[0].MediaType == 'image') {
+      if (items[0].MediaType == 'image' || items[0].MediaType == 'gif') {
         console.log(items[0].MediaPath, 'helooooooooooooooooooo');
         return (
           <View
@@ -148,7 +148,10 @@ class Media extends Component {
         );
       }
     } else {
-      if (items[this.state.currentVideo]?.MediaType == 'image') {
+      if (
+        items[this.state.currentVideo]?.MediaType == 'image' ||
+        items[this.state.currentVideo]?.MediaType == 'gif'
+      ) {
         return (
           <View
             style={{

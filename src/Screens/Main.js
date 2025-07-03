@@ -1,7 +1,6 @@
 import React, {Component} from 'react';
 import {
   View,
-  Image,
   AppState,
   ToastAndroid,
   StatusBar,
@@ -21,6 +20,8 @@ import {
 //   immersiveModeOn,
 //   immersiveModeOff,
 // } from 'react-native-android-immersive-mode';
+import FastImage from 'react-native-fast-image';
+
 import Video from 'react-native-video';
 // import Carousel from 'react-native-snap-carousel';
 import NetInfo from '@react-native-community/netinfo';
@@ -112,11 +113,12 @@ class Main extends Component {
               justifyContent: 'center',
               alignItems: 'center',
             }}>
-            <Image
+            <FastImage
               resizeMode={'stretch'}
               style={{width: this.state.width, height: this.state.height}}
               source={{
                 uri: items[0].MediaPath,
+                priority: FastImage.priority.high,
               }}
             />
             {/* <KeepAwake /> */}
@@ -157,10 +159,11 @@ class Main extends Component {
               justifyContent: 'center',
               alignItems: 'center',
             }}>
-            <Image
+            <FastImage
               resizeMode={'stretch'}
               source={{
                 uri: items[this.state.currentVideo]?.MediaPath,
+                priority: FastImage.priority.high,
               }}
               onLoad={() =>
                 setTimeout(() => {

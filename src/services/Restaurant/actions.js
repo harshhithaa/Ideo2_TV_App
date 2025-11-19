@@ -1,112 +1,142 @@
-import {FETCH_ITEMS, SET_WALLET} from './actionTypes';
+// src/services/Restaurant/actions.js
+import { FETCH_ITEMS, SET_WALLET } from './actionTypes';
 import axios from 'axios';
 import AsyncStorage from '@react-native-community/async-storage';
 import VersionCheck from 'react-native-version-check';
+import { baseUrl } from '../util';
+
 let version = VersionCheck.getCurrentVersion();
 
-export const fetchItems = callback => dispatch => {
-  AsyncStorage.getItem('user').then(reps => {
-    console.log(reps, 'SJJJJJJJJ');
+/**
+ * -------------------------
+ * FETCH MONITOR DETAILS
+ * -------------------------
+ * This is called AFTER login in Media screen.
+ * Fixed:
+ *  - Proper async/await
+ *  - Safe JSON parse
+ *  - Callback always called ONCE
+ *  - Clear logs
+ */
+export const fetchItems = callback => async dispatch => {
+  try {
+    const reps = await AsyncStorage.getItem('user');
+    console.log("Async User:", reps);
 
-    let token = JSON.parse(reps);
+    if (!reps) {
+      callback("No user found in storage");
+      return;
+    }
 
-    axios({
+    let token;
+    try {
+      token = JSON.parse(reps);
+    } catch (e) {
+      callback("Invalid user JSON");
+      return;
+    }
+
+    const response = await axios({
       method: 'POST',
-      // url: `https://coppercodes.com/ideogram/heritage/index.php`,
       url: `http://139.59.80.152:3000/api/monitor/fetchmonitordetails`,
       headers: {
         'Content-Type': 'application/json',
-        AppVersion: '1.0.0',
+        AppVersion: version,
         Authorization: 'TlozR28zTWNlSTp3YnB1MkpKQ3cy',
-        AuthToken: `${token.AuthToken}`,
+        AuthToken: token.AuthToken,
       },
       data: {
         MonitorRef: token.MonitorRef,
       },
-    })
-      .then(res => {
-        let items = res.data;
-        if (!items.Error) {
-          // let alldishes = [];
-          let sub = items.Details;
-          console.log(sub, 'Sub=====>>>>>>>');
-          // let singleImage_url =
-          //   items.venue_image == null ? null : items.venue_image;
-          // let updatedOn = items.updatedOn;
-          // let image_url = items.url === '' ? '' : items.url.split(',');
-          // let video_url = items.url.split(',')[1];
-          // console.log(items.image_url);
-          // let payload = {
-          //   sub,
-          //   singleImage_url,
-          //   image_url,
-          //   video_url,
-          //   updatedOn,
-          // };  console.log(sub);
-          dispatch({
-            type: FETCH_ITEMS,
-            payload: sub,
-          });
-          callback();
-        } else {
-          callback(items.Error.ErrorMessage);
-        }
-      })
-      .catch(error => {
-        console.log(error);
-        callback(error);
-      });
-  });
-};
-export const fetchscreenref = (payload, callback) => dispatch => {
-  console.log('itemsscreen');
-  axios({
-    method: 'post',
-    url: `http://139.59.80.152:3000/api/monitor/login`,
-    headers: {
-      'Content-Type': 'application/json',
-      AppVersion: '1.0.0',
-      Authorization: 'TlozR28zTWNlSTp3YnB1MkpKQ3cy',
-    },
-    data: payload,
-  })
-    .then(res => {
-      console.log(res);
-      let items = res.data;
-      if (!items.Error) {
-        if (items == 'Incorrect Password' || items == '0 results') {
-          callback({error: true});
-        } else {
-          let updatedUser = items.Details;
-          console.log(updatedUser);
-
-          AsyncStorage.setItem(
-            'user',
-            JSON.stringify(updatedUser),
-            (err, result) => {
-              dispatch({
-                type: SET_WALLET,
-                payload: updatedUser,
-              });
-              callback();
-            },
-          );
-        }
-      } else {
-        callback({err: items.Error});
-      }
-    })
-    .catch(error => {
-      console.log(error);
-      callback(error);
     });
+
+    const items = response.data;
+
+    if (items?.Error) {
+      callback(items.Error.ErrorMessage);
+      return;
+    }
+
+    const sub = items.Details;
+    console.log('Fetched Monitor Details:', sub);
+
+    dispatch({
+      type: FETCH_ITEMS,
+      payload: sub,
+    });
+
+    callback(); // success
+  } catch (error) {
+    console.log("Fetch Items Error:", error);
+    callback(error.message || error);
+  }
 };
+
+
+
+/**
+ * -------------------------
+ * LOGIN (Monitor Login)
+ * -------------------------
+ * Called from Login Screen
+ * -------------------------
+ */
+export const fetchscreenref = (payload, callback) => async dispatch => {
+  try {
+    console.log("Attempt login...");
+
+    const response = await axios({
+      method: 'POST',
+      url: `${baseUrl}monitor/login`,
+      headers: {
+        'Content-Type': 'application/json',
+        AppVersion: version,
+        Authorization: 'TlozR28zTWNlSTp3YnB1MkpKQ3cy',
+      },
+      data: payload,
+    });
+
+    const items = response.data;
+    console.log("Login Response:", items);
+
+    if (items?.Error) {
+      callback({ err: items.Error });
+      return;
+    }
+
+    if (items === 'Incorrect Password' || items === '0 results') {
+      callback({ error: true });
+      return;
+    }
+
+    const updatedUser = items.Details;
+
+    await AsyncStorage.setItem('user', JSON.stringify(updatedUser));
+
+    dispatch({
+      type: SET_WALLET,
+      payload: updatedUser,
+    });
+
+    callback(); // success
+  } catch (error) {
+    console.log("Login Error:", error);
+    callback(error.message || error);
+  }
+};
+
+
+
+/**
+ * -------------------------
+ * UPDATE ORDER / USER
+ * -------------------------
+ */
 export const updateOrder = (payload, callback) => dispatch => {
-  // var payload = AsyncStorage.getItem('user');
-  // console.log(payload);
   dispatch({
     type: SET_WALLET,
-    payload: payload,
+    payload,
   });
-  callback();
+
+  callback?.();
 };

@@ -87,10 +87,10 @@ class Media extends Component {
   };
 
   getdta = () => {
-    NetInfo.fetch().then(isConnected => {
-      if (isConnected.isConnected) {
-        console.log(this.props.order.error, 'vid');
-        this.props.fetchItems(error => {});
+    NetInfo.fetch().then(state => {
+      if (state.isConnected) {
+         this.props.fetchItems(() => {});
+
       }
     });
   };
@@ -193,7 +193,7 @@ class Media extends Component {
                       )
                     : null,
               }}
-              resizeMode={'stretch'}
+              resizeMode={'stretch'}    
               onEnd={() => this.handleEnd()}
               style={{width: this.state.width, height: this.state.height}}
             />
@@ -203,93 +203,103 @@ class Media extends Component {
     }
   };
 
-  shouldComponentUpdate = async (nextprops, prevstate) => {
-    console.log(nextprops.order.MediaList, 'neextprops ==>>>>');
-    console.log(this.props.order.MediaList, 'api porps ==>>>>');
+  // shouldComponentUpdate = async (nextprops, prevstate) => {
+  //   console.log(nextprops.order.MediaList, 'neextprops ==>>>>');
+  //   console.log(this.props.order.MediaList, 'api porps ==>>>>');
 
-    // if (!this.state.modalVisible) {
-    //   const version = await checkVersion();
-    //   if (version.needsUpdate) {
-    //     this.state.modalVisible = true;
-    //   }
-    // }
+  //   // if (!this.state.modalVisible) {
+  //   //   const version = await checkVersion();
+  //   //   if (version.needsUpdate) {
+  //   //     this.state.modalVisible = true;
+  //   //   }
+  //   // }
 
-    // console.log(nextprops.order.MediaList.length, "neextprops ==>>>> length");
-    // console.log(this.props.order.MediaList.length, "api props ==>>>> length");
-    if (this.props.order.Orientation != undefined) {
-      if (this.props.order.Orientation == 0) {
-        Orientation.unlockAllOrientations();
-        Orientation.lockToPortrait();
-      } else if (this.props.order.Orientation == 90) {
-        Orientation.unlockAllOrientations();
-        Orientation.lockToLandscapeLeft();
-      } else if (this.props.order.Orientation == 180) {
-        Orientation.unlockAllOrientations();
-        Orientation.lockToPortrait();
-      } else if (this.props.order.Orientation == 270) {
-        Orientation.unlockAllOrientations();
-        Orientation.lockToLandscapeRight();
-      }
-    }
+  //   // console.log(nextprops.order.MediaList.length, "neextprops ==>>>> length");
+  //   // console.log(this.props.order.MediaList.length, "api props ==>>>> length");
+  //   if (this.props.order.Orientation != undefined) {
+  //     if (this.props.order.Orientation == 0) {
+  //       Orientation.unlockAllOrientations();
+  //       Orientation.lockToPortrait();
+  //     } else if (this.props.order.Orientation == 90) {
+  //       Orientation.unlockAllOrientations();
+  //       Orientation.lockToLandscapeLeft();
+  //     } else if (this.props.order.Orientation == 180) {
+  //       Orientation.unlockAllOrientations();
+  //       Orientation.lockToPortrait();
+  //     } else if (this.props.order.Orientation == 270) {
+  //       Orientation.unlockAllOrientations();
+  //       Orientation.lockToLandscapeRight();
+  //     }
+  //   }
 
-    if (this.props.order.SlideTime != undefined) {
-      this.state.slideTime = this.props.order.SlideTime;
-    }
+  //   if (this.props.order.SlideTime != undefined) {
+  //     this.state.slideTime = this.props.order.SlideTime;
+  //   }
 
-    if (
-      this.props.order.MediaList !== undefined &&
-      this.props.order.MediaList.length !== 0
-    ) {
-      for (var i = 0; i < nextprops.order.MediaList.length; i++) {
-        this.state.loading = false;
-        this.state.videos = this.props.order.MediaList;
-        // this.setState({videos: nextprops.order.MediaList});
-        if (
-          nextprops.order.MediaList[i].MediaName !=
-          this.props.order.MediaList[i].MediaName
-        ) {
-          return true;
-        } else {
-          if (
-            nextprops.order.MediaList.length !=
-            this.props.order.MediaList.length
-          ) {
-            this.state.currentVideo = 0;
-            console.log('uanjasncnsdioc');
-            return true;
-          }
-        }
-      }
-      return true;
-    } else {
-      return null;
-    }
-    // if (prevstate.paused != this.state.paused) {
-    //   return true;
-    // }
-  };
+  //   if (
+  //     this.props.order.MediaList !== undefined &&
+  //     this.props.order.MediaList.length !== 0
+  //   ) {
+  //     for (var i = 0; i < nextprops.order.MediaList.length; i++) {
+  //       this.state.loading = false;
+  //       this.state.videos = this.props.order.MediaList;
+  //       // this.setState({videos: nextprops.order.MediaList});
+  //       if (
+  //         nextprops.order.MediaList[i].MediaName !=
+  //         this.props.order.MediaList[i].MediaName
+  //       ) {
+  //         return true;
+  //       } else {
+  //         if (
+  //           nextprops.order.MediaList.length !=
+  //           this.props.order.MediaList.length
+  //         ) {
+  //           this.state.currentVideo = 0;
+  //           console.log('uanjasncnsdioc');
+  //           return true;
+  //         }
+  //       }
+  //     }
+  //     return true;
+  //   } else {
+  //     return null;
+  //   }
+  //   // if (prevstate.paused != this.state.paused) {
+  //   //   return true;
+  //   // }
+  //};
+  componentDidUpdate(prevProps) {
+  // Only update when order changes from Redux
+  if (prevProps.order !== this.props.order) {
+    const { MediaList, SlideTime } = this.props.order;
+
+    this.setState({
+      loading: false,
+      videos: MediaList || [],
+      currentVideo: 0,
+      slideTime: SlideTime || 5,
+    });
+  }
+}
+
 
   handleEnd = () => {
-    console.log(
-      this.state.videos[this.state.currentVideo]?.MediaPath,
-      'handleEnd',
-    );
-    console.log('length', this.state.videos.length - 1);
+  const { videos, currentVideo } = this.state;
 
-    if (this.state.videos.length == 1) {
-      console.log('helooooooooooooooooooooo');
-      this.state.currentVideo = 0;
-    }
+  if (!videos || videos.length === 0) return;
 
-    if (this.state.currentVideo >= this.state.videos.length - 1) {
-      console.log('repeat');
-      this.state.currentVideo = 0;
-      // this.setState({currentVideo: 0});
-    } else {
-      this.state.currentVideo = this.state.currentVideo + 1;
-      // this.setState({currentVideo: currentVideo + 1});
-    }
-  };
+  if (videos.length === 1) {
+    this.setState({ currentVideo: 0 });
+    return;
+  }
+
+  if (currentVideo >= videos.length - 1) {
+    this.setState({ currentVideo: 0 });
+  } else {
+    this.setState({ currentVideo: currentVideo + 1 });
+  }
+};
+
 
   componentWillUnmount() {
     Dimensions.removeEventListener('change');

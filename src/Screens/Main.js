@@ -72,9 +72,14 @@ class Main extends Component {
   componentDidMount = async () => {
     // Orientation.unlockAllOrientations();
     // Orientation.lockToLandscape();
+    
     StatusBar.setHidden(true);
     SystemNavigationBar.navigationHide();
     KeepAwake.activate();
+    this.props.fetchItems(() => {
+  this.setState({loading: false});
+});
+
     this.interval = setInterval(() => this.getdta(), 10000);
     this.timeout = setTimeout(() => {
       this.props.navigation.replace('Main');

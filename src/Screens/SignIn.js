@@ -10,6 +10,7 @@ import {
   TextInput,
   Text,
   TouchableOpacity,
+  Pressable, // <-- added
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
@@ -36,6 +37,8 @@ import Modal from 'react-native-modal';
 import logo from '../Assets/Logos/ideogram_logo.png';
 
 class PhoneAuth extends Component {
+  passwordInputRef = React.createRef();
+
   state = {
     showPhoneInput: true,
     modalVisible: false,
@@ -50,6 +53,7 @@ class PhoneAuth extends Component {
     screen: 0,
     onkey: false,
     spinner: false,
+    passwordHidden: true,
   };
 
   componentDidMount = async () => {
@@ -69,7 +73,8 @@ class PhoneAuth extends Component {
         };
         this.props.fetchscreenref(payload, (error) => {
           if (!error) {
-            this.props.navigation.replace('Main', {prevpath: 'COD'});
+this.props.navigation.replace('Main', { prevpath: 'COD' });
+
           } else {
             Alert.alert(`${error.err.ErrorMessage}`);
           }
@@ -91,104 +96,166 @@ class PhoneAuth extends Component {
   };
 
   render() {
+    // near beginning of render()
+    console.log('[SIGNIN] render passwordHidden=', this.state.passwordHidden);
+    
     const {password} = this.state;
     return (
-      <SafeAreaView style={styles.container}>
+  <KeyboardAvoidingView
+    style={{flex: 1}}
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+  >
+    <SafeAreaView style={styles.container}>
+      <View>
         <View>
-          <View>
-            <Modal
-              isVisible={this.state.modalVisible}
-              onBackdropPress={() => {
-                this.setState({modalVisible: false});
-              }}
-              style={{
-                backgroundColor: 'white',
-                height: '50%',
-                width: '50%',
-                alignSelf: 'center',
-              }}>
-              <View style={{height: '100%', width: '100%', marginTop: 10}}>
-                <Image
-                  source={logo}
-                  style={{height: 100, width: 100, alignSelf: 'center'}}
-                />
+          <Modal
+            isVisible={this.state.modalVisible}
+            onBackdropPress={() => {
+              this.setState({modalVisible: false});
+            }}
+            style={{
+              backgroundColor: 'white',
+              height: '50%',
+              width: '50%',
+              alignSelf: 'center',
+            }}>
+            <View style={{height: '100%', width: '100%', marginTop: 10}}>
+              <Image
+                source={logo}
+                style={{height: 100, width: 100, alignSelf: 'center'}}
+              />
+              <Text
+                style={{
+                  textAlign: 'center',
+                  marginTop: 15,
+                  fontWeight: 'bold',
+                  fontSize: 16,
+                }}>
+                New Version Available
+              </Text>
+              <Text style={{textAlign: 'center', marginTop: 15}}>
+                Please update to get latest features and best experience
+              </Text>
+              <TouchableOpacity
+                onPress={this.updateApp}
+                style={{
+                  backgroundColor: '#FFA500',
+                  height: '20%',
+                  width: '100%',
+                  position: 'absolute',
+                  top: '80%',
+                  justifyContent: 'center',
+                }}>
                 <Text
                   style={{
+                    color: 'white',
                     textAlign: 'center',
-                    marginTop: 15,
                     fontWeight: 'bold',
-                    fontSize: 16,
+                    fontSize: 15,
                   }}>
-                  New Version Available
+                  UPDATE NOW
                 </Text>
-                <Text style={{textAlign: 'center', marginTop: 15}}>
-                  Please update to get latest features and best experience
-                </Text>
-                <TouchableOpacity
-                  onPress={this.updateApp}
-                  style={{
-                    backgroundColor: '#FFA500',
-                    height: '20%',
-                    width: '100%',
-                    position: 'absolute',
-                    top: '80%',
-                    justifyContent: 'center',
-                  }}>
-                  <Text
-                    style={{
-                      color: 'white',
-                      textAlign: 'center',
-                      fontWeight: 'bold',
-                      fontSize: 15,
-                    }}>
-                    UPDATE NOW
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => this.setState({modalVisible: false})}
-                  style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: 5,
-                    paddingRight: 15,
-                  }}>
-                  <Text style={{fontSize: 20}}>X</Text>
-                </TouchableOpacity>
-              </View>
-              <View></View>
-            </Modal>
-          </View>
-          <View style={{alignItems: 'center'}}>
-            <FormInput
-              change={async (text) => {
-                this.setState({screen: text});
-              }}
-              value={this.state.screen}
-              label="SCREEN NAME"
-              placeholder="Enter screen name"
-            />
-            <FormInput
-              secure
-              change={(text) => {
-                this.setState({password: text});
-              }}
-              value={this.state.password}
-              label="PASSWORD"
-              placeholder="Enter password"
-            />
-          </View>
-          <Button onPress={() => this.signIn()} title={'LOGIN'} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => this.setState({modalVisible: false})}
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: 5,
+                  paddingRight: 15,
+                }}>
+                <Text style={{fontSize: 20}}>X</Text>
+              </TouchableOpacity>
+            </View>
+          </Modal>
         </View>
-      </SafeAreaView>
-    );
+
+        <View style={{alignItems: 'center'}}>
+          <FormInput
+            change={(text) => this.setState({screen: text})}
+            value={this.state.screen}
+            label="SCREEN NAME"
+            placeholder="Enter screen name"
+          />
+
+          {/* Password input with visibility toggle */}
+          <View
+            style={{
+              width: responsiveWidth(80),
+              marginTop: 10,
+              borderBottomWidth: 0.3,
+              borderBottomColor: colors.lightFontColor,
+              paddingVertical: 5,
+              overflow: 'visible',
+              position: 'relative', // make parent a positioned container
+            }}>
+            <Text style={styles.inputLabel}>PASSWORD</Text>
+
+            <View
+              style={{
+                // keep a row so input lines up; the button will be absolute-right
+                flexDirection: 'row',
+                alignItems: 'center',
+              }}>
+              <TextInput
+                ref={this.passwordInputRef}
+                placeholder="Enter password"
+                placeholderTextColor={colors.lightFontColor}
+                secureTextEntry={this.state.passwordHidden}
+                value={this.state.password}
+                onChangeText={(text) => this.setState({password: text})}
+                underlineColorAndroid="transparent"
+                style={{
+                  width: '100%',               // full width but padded on right
+                  height: 44,
+                  fontSize: responsiveFontSize(1.9),
+                  color: colors.fontColor,
+                  backgroundColor: 'transparent',
+                  paddingHorizontal: 8,
+                  paddingRight: 80,            // reserve space for the absolute toggle
+                }}
+              />
+
+              {/* absolute-positioned toggle on the right so it cannot be hidden */}
+              <Pressable
+                accessible={true}
+                focusable={true}
+                onPress={() =>
+                  this.setState((s) => ({ passwordHidden: !s.passwordHidden }))
+                }
+                hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+                style={{
+                  position: 'absolute',
+                  right: 8,
+                  top: '50%',
+                  transform: [{translateY: -12}],
+                  minWidth: 56,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: 6,
+                  zIndex: 9999,
+                  elevation: 9999,
+                }}>
+                <Text style={{color: colors.fontColor, fontSize: 14, fontWeight: '700'}}>
+                  {this.state.passwordHidden ? 'Show' : 'Hide'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+
+        <Button onPress={() => this.signIn()} title={'LOGIN'} />
+      </View>
+    </SafeAreaView>
+  </KeyboardAvoidingView>
+);
   }
 }
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     backgroundColor: colors.primary,
-    paddingHorizontal: '5%',
     // transform: [{rotate: '90deg'}]
   },
   message: {
@@ -221,6 +288,31 @@ const styles = StyleSheet.create({
     color: colors.fontColor,
     width: responsiveWidth(40),
     borderRadius: 5,
+  },
+  // updated password row and input overrides
+  passwordInput: {
+    paddingRight: 10,
+    backgroundColor: 'transparent',
+  },
+  eyeButton: {
+    marginLeft: 8,
+    height: 40,
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+    elevation: 10,
+  },
+  eyeText: {
+    color: colors.fontColor,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  inputLabel: {
+    color: colors.fontColor,
+    fontSize: 12,
+    marginBottom: 6,
+    fontWeight: 'bold',
   },
   logoContainer: {
     width: responsiveWidth(50),

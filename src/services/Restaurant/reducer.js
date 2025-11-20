@@ -104,16 +104,44 @@ let initialState = {
 export default (state = initialState, action) => {
   switch (action.type) {
     case FETCH_ITEMS: {
+      const details = action.payload || {};
+
+      // Possible places API can return media
+      const apiMedia = Array.isArray(details.MediaList) ? details.MediaList : [];
+      const candidates = [
+        apiMedia,
+        Array.isArray(details.DefaultPlaylist) ? details.DefaultPlaylist : [],
+        Array.isArray(details.DefaultMediaList) ? details.DefaultMediaList : [],
+        Array.isArray(details.Media) ? details.Media : [],
+      ];
+
+      let chosenMedia = [];
+      for (const c of candidates) {
+        if (c && c.length) {
+          chosenMedia = c;
+          break;
+        }
+      }
+
+      // fallback to previous state's MediaList if still empty
+      if (!chosenMedia.length && state.order && Array.isArray(state.order.MediaList)) {
+        chosenMedia = state.order.MediaList;
+      }
+
+      const SlideTime = details.SlideTime !== undefined ? details.SlideTime : state.order.SlideTime;
+      const Orientation = details.Orientation !== undefined ? details.Orientation : state.order.Orientation;
+
       return {
         ...state,
+        items: details,
         order: {
           ...state.order,
-          ...action.payload
-        
-        }
+          MediaList: chosenMedia,
+          SlideTime,
+          Orientation,
+        },
       };
     }
-    
     case UPDATE_ORDERNOW: {
       return {
         ...state,

@@ -7,24 +7,13 @@ import { baseUrl } from '../util';
 
 let version = VersionCheck.getCurrentVersion();
 
-/**
- * -------------------------
- * FETCH MONITOR DETAILS
- * -------------------------
- * This is called AFTER login in Media screen.
- * Fixed:
- *  - Proper async/await
- *  - Safe JSON parse
- *  - Callback always called ONCE
- *  - Clear logs
- */
 export const fetchItems = callback => async dispatch => {
   try {
     const reps = await AsyncStorage.getItem('user');
-    console.log("Async User:", reps);
+    console.log('[fetchItems] Async User:', reps);
 
     if (!reps) {
-      callback("No user found in storage");
+      callback && callback('No user found in storage');
       return;
     }
 
@@ -32,47 +21,52 @@ export const fetchItems = callback => async dispatch => {
     try {
       token = JSON.parse(reps);
     } catch (e) {
-      callback("Invalid user JSON");
+      callback && callback('Invalid user JSON');
       return;
     }
 
+    // use baseUrl from util.js so emulator/host mapping is correct
+    const url = `${baseUrl}monitor/fetchmonitordetails`;
+    console.log('[fetchItems] POST', url, 'MonitorRef=', token.MonitorRef);
+
     const response = await axios({
       method: 'POST',
-      url: `http://139.59.80.152:3000/api/monitor/fetchmonitordetails`,
+      url,
       headers: {
         'Content-Type': 'application/json',
         AppVersion: version,
         Authorization: 'TlozR28zTWNlSTp3YnB1MkpKQ3cy',
         AuthToken: token.AuthToken,
       },
-      data: {
-        MonitorRef: token.MonitorRef,
-      },
+      data: { MonitorRef: token.MonitorRef },
+      timeout: 10000,
     });
 
-    const items = response.data;
+    console.log('[fetchItems] status:', response.status, 'data:', response.data);
 
+    const items = response.data;
     if (items?.Error) {
-      callback(items.Error.ErrorMessage);
+      console.log('[fetchItems] API Error:', items.Error);
+      callback && callback(items.Error.ErrorMessage || 'API Error');
       return;
     }
 
-    const sub = items.Details;
-    console.log('Fetched Monitor Details:', sub);
+    // Normalize details payload
+    const details = items.Details || items.details || items || {};
+    console.log('[fetchItems] Details:', details);
 
     dispatch({
       type: FETCH_ITEMS,
-      payload: sub,
+      payload: details,
     });
 
-    callback(); // success
+    callback && callback(null);
   } catch (error) {
-    console.log("Fetch Items Error:", error);
-    callback(error.message || error);
+    console.log('[fetchItems] Error:', error?.message || error);
+    if (error?.response) console.log('[fetchItems] response data:', error.response.data);
+    callback && callback(error.message || 'Network Error');
   }
 };
-
-
 
 /**
  * -------------------------
@@ -124,8 +118,6 @@ export const fetchscreenref = (payload, callback) => async dispatch => {
     callback(error.message || error);
   }
 };
-
-
 
 /**
  * -------------------------

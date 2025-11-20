@@ -74,7 +74,13 @@ class Media extends Component {
     StatusBar.setHidden(true);
     SystemNavigationBar.navigationHide();
     KeepAwake.activate();
-    this.interval = setInterval(() => this.getdta(), 10000);
+
+    // ensure we do not create multiple intervals
+    if (!this.interval) {
+      // poll less frequently (example: 60s). Adjust as required.
+      this.interval = setInterval(() => this.getdta(), 60000);
+    }
+
     this.timeout = setTimeout(() => {
       this.props.navigation.replace('Next');
     }, 1800000);
@@ -302,9 +308,17 @@ class Media extends Component {
 
 
   componentWillUnmount() {
-    Dimensions.removeEventListener('change');
-    clearInterval(this.interval);
-    clearTimeout(this.timeout);
+    if (this.dimensionSubscription && typeof this.dimensionSubscription.remove === 'function') {
+      this.dimensionSubscription.remove();
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = null;
+    }
   }
 
   render() {

@@ -1,16 +1,15 @@
-import React, { useRef } from 'react';
-import { View, Text, TextInput, SafeAreaView, TouchableOpacity } from 'react-native';
-
+import React, { useRef, forwardRef } from 'react';
+import { View, Text, TextInput, SafeAreaView, TouchableOpacity, Platform } from 'react-native';
 import {
   responsiveHeight,
   responsiveWidth,
   responsiveFontSize,
 } from 'react-native-responsive-dimensions';
-
 import Colors from '../../Assets/Colors/Colors';
 
-const formInput = props => {
-  const textInputRef = useRef();
+const FormInput = forwardRef((props, ref) => {
+  const textInputRef = ref || useRef();
+
   return (
     <SafeAreaView>
       <View
@@ -32,7 +31,6 @@ const formInput = props => {
           {props.label}
         </Text>
 
-        {/* Use TouchableOpacity instead of TouchableHighlight to avoid the TV/Android black underlay */}
         <TouchableOpacity
           activeOpacity={1}
           onPress={() => textInputRef?.current?.focus()}
@@ -46,16 +44,20 @@ const formInput = props => {
             keyboardType={props.numPad ? 'phone-pad' : 'default'}
             value={props.value}
             onChangeText={text => props.change(text)}
+            onFocus={props.onFocus}
+            onBlur={props.onBlur}
             placeholder={props.placeholder}
             underlineColorAndroid="transparent"
             placeholderTextColor={Colors.lightFontColor}
+            showSoftInputOnFocus={props.showSoftInputOnFocus ?? true} // allow disabling system keyboard
             style={[
               {
                 color: Colors.fontColor,
                 fontFamily: 'monospace',
                 fontSize: responsiveFontSize(1.8),
                 padding: 0,
-                backgroundColor: 'transparent', // ensure transparent
+                backgroundColor: 'transparent',
+                paddingRight: props.rightPadding || 80, // leave space for toggle
               },
               props.typestyle,
             ]}
@@ -64,6 +66,6 @@ const formInput = props => {
       </View>
     </SafeAreaView>
   );
-};
+});
 
-export default formInput;
+export default FormInput;

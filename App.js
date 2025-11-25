@@ -14,6 +14,7 @@ import {createStackNavigator} from '@react-navigation/stack';
 // import type {Node} from 'react';
 import {SafeAreaView, StyleSheet} from 'react-native';
 
+import Phone from './src/Screens/SignIn'; // <- use SignIn here
 import Test from './src/Screens/Test';
 import SplashScreen from './src/Screens/SplashScreen';
 import Media from './src/Screens/Media';
@@ -28,16 +29,11 @@ const App = () => {
     <Provider store={store}>
       <NavigationContainer>
         <Stack.Navigator
-          screenOptions={{headerShown: false, tabBarVisible: false}}
-          // headerMode="none"
-          initialRouteName={'SplashScreen'}>
-          <Stack.Screen
-            options={{tabBarVisible: false}}
-            name="SplashScreen"
-            component={SplashScreen}
-          />
-          <Stack.Screen name="Login" component={Test} />
-          {/* <Stack.Screen name="Login" component={Phone} /> */}
+          initialRouteName="SplashScreen"
+          screenOptions={{ headerShown: false }}
+        >
+          <Stack.Screen name="SplashScreen" component={SplashScreen} />
+          <Stack.Screen name="Login" component={Phone} />
           <Stack.Screen name="Main" component={Media} />
           <Stack.Screen name="Next" component={Main} />
         </Stack.Navigator>

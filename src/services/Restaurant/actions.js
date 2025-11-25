@@ -4,6 +4,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-community/async-storage';
 import VersionCheck from 'react-native-version-check';
 import { baseUrl } from '../util';
+import { startMonitorHeartbeat, stopMonitorHeartbeat } from '../monitorHeartbeat';
 
 let version = VersionCheck.getCurrentVersion();
 
@@ -111,6 +112,9 @@ export const fetchscreenref = (payload, callback) => async dispatch => {
       type: SET_WALLET,
       payload: updatedUser,
     });
+
+    // NEW: start heartbeat after login (immediate + periodic)
+    startMonitorHeartbeat(updatedUser, 30000);
 
     callback(); // success
   } catch (error) {

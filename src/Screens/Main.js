@@ -39,13 +39,16 @@ class Main extends Component {
       modalVisible: false,
       loading: true,
       videos: [],
-      slideTime: 5,
+      // slideTime removed
       openConnectionModal: false,
       isErrored: false,
       errorMessage: '',
       paused: false,
       currentVideo: 0,
     };
+
+    this.mediaTimer = null;
+    this.videoTimer = null;
 
     // Store subscription reference for cleanup
     this.dimensionSubscription = null;
@@ -79,18 +82,17 @@ class Main extends Component {
   };
 
   componentWillUnmount() {
-    // Clean up dimension listener (new way - fixes deprecation warning)
-    if (this.dimensionSubscription) {
+    this.clearTimers();
+    if (this.dimensionSubscription && typeof this.dimensionSubscription.remove === 'function') {
       this.dimensionSubscription.remove();
     }
-
-    // Clear intervals and timeouts
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
     }
     if (this.timeout) {
       clearTimeout(this.timeout);
+      this.timeout = null;
     }
   }
 
@@ -109,6 +111,32 @@ class Main extends Component {
     });
   };
 
+  clearTimers = () => {
+    if (this.mediaTimer) { clearTimeout(this.mediaTimer); this.mediaTimer = null; }
+    if (this.videoTimer) { clearTimeout(this.videoTimer); this.videoTimer = null; }
+  }
+
+  startMediaTimer = (durationSeconds) => {
+    this.clearTimers();
+    const ms = Math.max(1, parseFloat(durationSeconds) || 5) * 1000; // fallback 5s
+    this.mediaTimer = setTimeout(() => this.handleEnd(), ms);
+  }
+
+  onVideoLoad = (data, item) => {
+    // prefer admin/playlist Duration if present and >0, else use natural duration from file
+    const adminDuration = item?.Duration;
+    const natural = data?.duration || 0;
+    const useSec = (adminDuration && adminDuration > 0) ? adminDuration : (natural > 0 ? natural : 5);
+    // If the video is longer than admin duration and we want to cut, set timer to advance
+    // If adminDuration null and repeat is true for single video, let onEnd handle advancing.
+    if (useSec > 0) {
+      // clear any previous timer and set one
+      if (this.videoTimer) clearTimeout(this.videoTimer);
+      this.videoTimer = setTimeout(() => this.handleEnd(), useSec * 1000);
+    }
+  }
+
+  // renderView: for images use onLoad -> startMediaTimer(item.Duration||5)
   renderView = () => {
     let items =
       (this.state.videos &&
@@ -117,102 +145,64 @@ class Main extends Component {
 
     // Handle single media item
     if (items && items.length === 1) {
-      if (items[0].MediaType === 'image' || items[0].MediaType === 'gif') {
-        console.log(items[0].MediaPath, 'Single image/gif');
+      const item = items[0];
+      if (item.MediaType === 'image' || item.MediaType === 'gif') {
         return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
+          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
             <FastImage
               resizeMode={'stretch'}
               style={{width: this.state.width, height: this.state.height}}
-              source={{
-                uri: items[0].MediaPath,
-                priority: FastImage.priority.high,
-              }}
+              source={{ uri: item.MediaPath, priority: FastImage.priority.high }}
+              onLoad={() => this.startMediaTimer(item.Duration || item.MediaDuration || 5)}
             />
           </View>
         );
-      } else if (items[0].MediaType === 'video') {
+      } else if (item.MediaType === 'video') {
         return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
+          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
             <StatusBar translucent backgroundColor="transparent" />
             <Video
-              source={{
-                uri:
-                  items[0]?.MediaPath != undefined
-                    ? convertToProxyURL(items[0]?.MediaPath)
-                    : null,
-              }}
+              source={{ uri: item?.MediaPath ? convertToProxyURL(item?.MediaPath) : null }}
               resizeMode={'stretch'}
               repeat={true}
-              onEnd={() => this.handleEnd()}
+              onEnd={() => {
+                // if admin duration exists we already advance by timer; otherwise onEnd should advance.
+                if (!item.Duration) this.handleEnd();
+              }}
+              onLoad={(data) => this.onVideoLoad(data, item)}
               style={{width: this.state.width, height: this.state.height}}
             />
           </View>
         );
       }
     }
-    // Handle multiple media items (playlist)
+    // Handle playlist
     else {
-      if (
-        items[this.state.currentVideo]?.MediaType === 'image' ||
-        items[this.state.currentVideo]?.MediaType === 'gif'
-      ) {
+      const item = items[this.state.currentVideo];
+      if (!item) return null;
+
+      if (item.MediaType === 'image' || item.MediaType === 'gif') {
         return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
+          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
             <FastImage
               resizeMode={'stretch'}
-              source={{
-                uri: items[this.state.currentVideo]?.MediaPath,
-                priority: FastImage.priority.high,
-              }}
-              onLoad={() =>
-                setTimeout(() => {
-                  this.handleEnd();
-                }, parseInt(this.state.slideTime) * 1000)
-              }
+              source={{ uri: item.MediaPath, priority: FastImage.priority.high }}
+              onLoad={() => this.startMediaTimer(item.Duration || item.MediaDuration || 5)}
               style={{width: this.state.width, height: this.state.height}}
             />
           </View>
         );
-      } else if (items[this.state.currentVideo]?.MediaType === 'video') {
+      } else if (item.MediaType === 'video') {
         return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
+          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
             <StatusBar translucent backgroundColor="transparent" />
             <Video
-              source={{
-                uri:
-                  items[this.state.currentVideo]?.MediaPath != undefined
-                    ? convertToProxyURL(
-                        items[this.state.currentVideo]?.MediaPath,
-                      )
-                    : null,
-              }}
+              source={{ uri: item?.MediaPath ? convertToProxyURL(item?.MediaPath) : null }}
               resizeMode={'stretch'}
-              onEnd={() => this.handleEnd()}
+              onEnd={() => {
+                if (!item.Duration) this.handleEnd();
+              }}
+              onLoad={(data) => this.onVideoLoad(data, item)}
               style={{width: this.state.width, height: this.state.height}}
             />
           </View>
@@ -232,13 +222,16 @@ class Main extends Component {
     if (prevStr !== currStr) {
       console.log('[Main] MediaList changed — new order:');
       (currList || []).sort((a,b) => (a.Priority||0)-(b.Priority||0)).forEach((m, i) => {
-        console.log(`${i+1}. Priority ${m.Priority} — ${m.MediaName} (${m.MediaType})`);
+        console.log(`${i+1}. Priority ${m.Priority} — ${m.MediaName} (${m.MediaType}) — Duration:${m.Duration}`);
       });
+
+      // clear any running timers
+      this.clearTimers();
 
       this.setState({
         loading: false,
         videos: currList.slice(), // clone
-        slideTime: this.props.order.SlideTime || this.state.slideTime,
+        currentVideo: 0,
       });
 
       // apply orientation if provided (optional)
@@ -250,26 +243,20 @@ class Main extends Component {
   }
 
   handleEnd = () => {
-    console.log(
-      this.state.videos[this.state.currentVideo]?.MediaPath,
-      'handleEnd',
-    );
-    console.log('Playlist length:', this.state.videos.length);
+    this.clearTimers();
 
-    // Single video - stay at index 0
-    if (this.state.videos.length === 1) {
-      console.log('Single media item, staying at index 0');
-      this.setState({currentVideo: 0});
+    const { videos, currentVideo } = this.state;
+    if (!videos || videos.length === 0) return;
+
+    if (videos.length === 1) {
+      this.setState({ currentVideo: 0 });
       return;
     }
 
-    // Multiple videos - cycle through playlist
-    if (this.state.currentVideo >= this.state.videos.length - 1) {
-      console.log('End of playlist, restarting from beginning');
-      this.setState({currentVideo: 0});
+    if (currentVideo >= videos.length - 1) {
+      this.setState({ currentVideo: 0 });
     } else {
-      console.log('Moving to next media item');
-      this.setState({currentVideo: this.state.currentVideo + 1});
+      this.setState({ currentVideo: currentVideo + 1 });
     }
   };
 

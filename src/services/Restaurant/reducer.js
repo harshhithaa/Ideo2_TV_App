@@ -128,7 +128,7 @@ export default (state = initialState, action) => {
         chosenMedia = state.order.MediaList;
       }
 
-      const SlideTime = details.SlideTime !== undefined ? details.SlideTime : state.order.SlideTime;
+      // Orientation comes from API or keep existing
       const Orientation = details.Orientation !== undefined ? details.Orientation : state.order.Orientation;
 
       return {
@@ -137,7 +137,7 @@ export default (state = initialState, action) => {
         order: {
           ...state.order,
           MediaList: chosenMedia,
-          SlideTime,
+          // removed SlideTime: per-item durations will be used by player
           Orientation,
         },
       };

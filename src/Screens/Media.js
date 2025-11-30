@@ -55,13 +55,16 @@ class Media extends Component {
       modalVisible: false,
       loading: true,
       videos: [],
-      slideTime: 5,
+      // slideTime removed
       openConnectionModal: false,
       isErrored: false,
       errorMessage: '',
       paused: false,
       currentVideo: 0,
     };
+
+    this.mediaTimer = null;
+    this.videoTimer = null;
 
     Dimensions.addEventListener('change', e => {
       this.setState({width: e.window.width, height: e.window.height});
@@ -275,39 +278,65 @@ class Media extends Component {
   //   // }
   //};
   componentDidUpdate(prevProps) {
-  // Only update when order changes from Redux
-  if (prevProps.order !== this.props.order) {
-    const { MediaList, SlideTime } = this.props.order;
+    // Only update when order changes from Redux
+    if (prevProps.order !== this.props.order) {
+      const { MediaList } = this.props.order;
 
-    this.setState({
-      loading: false,
-      videos: MediaList || [],
-      currentVideo: 0,
-      slideTime: SlideTime || 5,
-    });
+      // clear timers
+      if (this.mediaTimer) { clearTimeout(this.mediaTimer); this.mediaTimer = null; }
+      if (this.videoTimer) { clearTimeout(this.videoTimer); this.videoTimer = null; }
+
+      this.setState({
+        loading: false,
+        videos: MediaList || [],
+        currentVideo: 0,
+      });
+    }
   }
-}
 
+  clearTimers = () => {
+    if (this.mediaTimer) { clearTimeout(this.mediaTimer); this.mediaTimer = null; }
+    if (this.videoTimer) { clearTimeout(this.videoTimer); this.videoTimer = null; }
+  }
+
+  startMediaTimer = (durationSeconds) => {
+    this.clearTimers();
+    const ms = Math.max(1, parseFloat(durationSeconds) || 5) * 1000;
+    this.mediaTimer = setTimeout(() => this.handleEnd(), ms);
+  }
+
+  onVideoLoad = (data, item) => {
+    const adminDuration = item?.Duration;
+    const natural = data?.duration || 0;
+    const useSec = (adminDuration && adminDuration > 0) ? adminDuration : (natural > 0 ? natural : 5);
+    if (useSec > 0) {
+      if (this.videoTimer) clearTimeout(this.videoTimer);
+      this.videoTimer = setTimeout(() => this.handleEnd(), useSec * 1000);
+    }
+  }
 
   handleEnd = () => {
-  const { videos, currentVideo } = this.state;
+    this.clearTimers();
 
-  if (!videos || videos.length === 0) return;
+    const { videos, currentVideo } = this.state;
 
-  if (videos.length === 1) {
-    this.setState({ currentVideo: 0 });
-    return;
-  }
+    if (!videos || videos.length === 0) return;
 
-  if (currentVideo >= videos.length - 1) {
-    this.setState({ currentVideo: 0 });
-  } else {
-    this.setState({ currentVideo: currentVideo + 1 });
-  }
-};
+    if (videos.length === 1) {
+      this.setState({ currentVideo: 0 });
+      return;
+    }
+
+    if (currentVideo >= videos.length - 1) {
+      this.setState({ currentVideo: 0 });
+    } else {
+      this.setState({ currentVideo: currentVideo + 1 });
+    }
+  };
 
 
   componentWillUnmount() {
+    this.clearTimers();
     if (this.dimensionSubscription && typeof this.dimensionSubscription.remove === 'function') {
       this.dimensionSubscription.remove();
     }

@@ -106,7 +106,7 @@ export default (state = initialState, action) => {
     case FETCH_ITEMS: {
       const details = action.payload || {};
 
-      // Possible places API can return media
+      // Get media list from various possible locations
       const apiMedia = Array.isArray(details.MediaList) ? details.MediaList : [];
       const candidates = [
         apiMedia,
@@ -128,7 +128,14 @@ export default (state = initialState, action) => {
         chosenMedia = state.order.MediaList;
       }
 
-      // Orientation comes from API or keep existing
+      // ✅ Ensure each media item has a valid Duration
+      chosenMedia = chosenMedia.map(item => ({
+        ...item,
+        Duration: item.Duration !== null && item.Duration !== undefined 
+          ? item.Duration 
+          : (item.MediaType === 'video' ? null : 10) // Default 10s for images, null for videos
+      }));
+
       const Orientation = details.Orientation !== undefined ? details.Orientation : state.order.Orientation;
 
       return {
@@ -137,7 +144,6 @@ export default (state = initialState, action) => {
         order: {
           ...state.order,
           MediaList: chosenMedia,
-          // removed SlideTime: per-item durations will be used by player
           Orientation,
         },
       };

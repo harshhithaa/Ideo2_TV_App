@@ -17,14 +17,8 @@ import {
   responsiveWidth,
   responsiveHeight,
 } from 'react-native-responsive-dimensions';
-// import {
-//   immersiveModeOn,
-//   immersiveModeOff,
-// } from 'react-native-android-immersive-mode';
 import Video from 'react-native-video';
-// import Carousel from 'react-native-snap-carousel';
 import NetInfo from '@react-native-community/netinfo';
-// import Toast from 'react-native-simple-toast';
 import KeepAwake from 'react-native-keep-awake';
 import {connect} from 'react-redux';
 
@@ -39,13 +33,6 @@ import {checkVersion} from 'react-native-check-version';
 
 import convertToProxyURL from 'react-native-video-cache';
 
-// function wp(percentage) {
-//   const value = (percentage * viewportWidth) / 100;
-//   return Math.round(value);
-// }
-
-// const slideWidth = wp(100);
-
 class Media extends Component {
   constructor() {
     super();
@@ -55,7 +42,6 @@ class Media extends Component {
       modalVisible: false,
       loading: true,
       videos: [],
-      // slideTime removed
       openConnectionModal: false,
       isErrored: false,
       errorMessage: '',
@@ -65,28 +51,46 @@ class Media extends Component {
 
     this.mediaTimer = null;
     this.videoTimer = null;
+    this.dimensionSubscription = null;
 
-    Dimensions.addEventListener('change', e => {
+    this.dimensionSubscription = Dimensions.addEventListener('change', e => {
       this.setState({width: e.window.width, height: e.window.height});
     });
   }
 
   componentDidMount = async () => {
-    // Orientation.unlockAllOrientations();
-    // Orientation.lockToLandscape();
     StatusBar.setHidden(true);
     SystemNavigationBar.navigationHide();
     KeepAwake.activate();
 
-    // ensure we do not create multiple intervals
+    // Set orientation based on initial data
+    this.updateOrientation(this.props.order?.Orientation);
+
+    // Fetch data immediately
+    this.getdta();
+
+    // Poll every 60 seconds
     if (!this.interval) {
-      // poll less frequently (example: 60s). Adjust as required.
       this.interval = setInterval(() => this.getdta(), 60000);
     }
 
+    // Auto-restart timeout
     this.timeout = setTimeout(() => {
       this.props.navigation.replace('Next');
     }, 1800000);
+  };
+
+  updateOrientation = orientation => {
+    if (orientation == 0 || orientation == 180) {
+      Orientation.unlockAllOrientations();
+      Orientation.lockToPortrait();
+    } else if (orientation == 90) {
+      Orientation.unlockAllOrientations();
+      Orientation.lockToLandscapeLeft();
+    } else if (orientation == 270) {
+      Orientation.unlockAllOrientations();
+      Orientation.lockToLandscapeRight();
+    }
   };
 
   updateApp = () => {
@@ -98,353 +102,315 @@ class Media extends Component {
   getdta = () => {
     NetInfo.fetch().then(state => {
       if (state.isConnected) {
-         this.props.fetchItems(() => {});
-
+        console.log('[Media] Fetching items from API...');
+        this.props.fetchItems(err => {
+          if (err) {
+            console.log('[Media] Fetch error:', err);
+          } else {
+            console.log('[Media] Fetch success');
+          }
+        });
+      } else {
+        console.log('[Media] No internet connection');
       }
     });
   };
 
-  renderView = () => {
-    let items =
-      (this.state.videos &&
-        this.state.videos.sort((a, b) => a.Priority > b.Priority)) ||
-      [];
-
-    if (items && items.length == 1) {
-      if (items[0].MediaType == 'image' || items[0].MediaType == 'gif') {
-        console.log(items[0].MediaPath, 'helooooooooooooooooooo');
-        return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
-            <Image
-              resizeMode={'stretch'}
-              style={{width: this.state.width, height: this.state.height}}
-              source={{
-                uri: items[0].MediaPath,
-              }}
-            />
-            {/* <KeepAwake /> */}
-          </View>
-        );
-      } else if (items[0].MediaType == 'video') {
-        return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
-            <StatusBar translucent backgroundColor="transparent" />
-            <Video
-              source={{
-                uri:
-                  items[0]?.MediaPath != undefined
-                    ? convertToProxyURL(items[0]?.MediaPath)
-                    : null,
-              }}
-              resizeMode={'stretch'}
-              repeat={true}
-              onEnd={() => this.handleEnd()}
-              style={{width: this.state.width, height: this.state.height}}
-            />
-          </View>
-        );
-      }
-    } else {
-      if (
-        items[this.state.currentVideo]?.MediaType == 'image' ||
-        items[this.state.currentVideo]?.MediaType == 'gif'
-      ) {
-        return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
-            <Image
-              resizeMode={'stretch'}
-              source={{
-                uri: items[this.state.currentVideo]?.MediaPath,
-              }}
-              onLoad={() =>
-                setTimeout(() => {
-                  this.handleEnd();
-                }, parseInt(this.state.slideTime) * 1000)
-              }
-              style={{width: this.state.width, height: this.state.height}}
-            />
-          </View>
-        );
-      } else if (items[this.state.currentVideo]?.MediaType == 'video') {
-        return (
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: '#fff',
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}>
-            <StatusBar translucent backgroundColor="transparent" />
-            <Video
-              source={{
-                uri:
-                  items[this.state.currentVideo]?.MediaPath != undefined
-                    ? convertToProxyURL(
-                        items[this.state.currentVideo]?.MediaPath,
-                      )
-                    : null,
-              }}
-              resizeMode={'stretch'}    
-              onEnd={() => this.handleEnd()}
-              style={{width: this.state.width, height: this.state.height}}
-            />
-          </View>
-        );
-      }
-    }
-  };
-
-  // shouldComponentUpdate = async (nextprops, prevstate) => {
-  //   console.log(nextprops.order.MediaList, 'neextprops ==>>>>');
-  //   console.log(this.props.order.MediaList, 'api porps ==>>>>');
-
-  //   // if (!this.state.modalVisible) {
-  //   //   const version = await checkVersion();
-  //   //   if (version.needsUpdate) {
-  //   //     this.state.modalVisible = true;
-  //   //   }
-  //   // }
-
-  //   // console.log(nextprops.order.MediaList.length, "neextprops ==>>>> length");
-  //   // console.log(this.props.order.MediaList.length, "api props ==>>>> length");
-  //   if (this.props.order.Orientation != undefined) {
-  //     if (this.props.order.Orientation == 0) {
-  //       Orientation.unlockAllOrientations();
-  //       Orientation.lockToPortrait();
-  //     } else if (this.props.order.Orientation == 90) {
-  //       Orientation.unlockAllOrientations();
-  //       Orientation.lockToLandscapeLeft();
-  //     } else if (this.props.order.Orientation == 180) {
-  //       Orientation.unlockAllOrientations();
-  //       Orientation.lockToPortrait();
-  //     } else if (this.props.order.Orientation == 270) {
-  //       Orientation.unlockAllOrientations();
-  //       Orientation.lockToLandscapeRight();
-  //     }
-  //   }
-
-  //   if (this.props.order.SlideTime != undefined) {
-  //     this.state.slideTime = this.props.order.SlideTime;
-  //   }
-
-  //   if (
-  //     this.props.order.MediaList !== undefined &&
-  //     this.props.order.MediaList.length !== 0
-  //   ) {
-  //     for (var i = 0; i < nextprops.order.MediaList.length; i++) {
-  //       this.state.loading = false;
-  //       this.state.videos = this.props.order.MediaList;
-  //       // this.setState({videos: nextprops.order.MediaList});
-  //       if (
-  //         nextprops.order.MediaList[i].MediaName !=
-  //         this.props.order.MediaList[i].MediaName
-  //       ) {
-  //         return true;
-  //       } else {
-  //         if (
-  //           nextprops.order.MediaList.length !=
-  //           this.props.order.MediaList.length
-  //         ) {
-  //           this.state.currentVideo = 0;
-  //           console.log('uanjasncnsdioc');
-  //           return true;
-  //         }
-  //       }
-  //     }
-  //     return true;
-  //   } else {
-  //     return null;
-  //   }
-  //   // if (prevstate.paused != this.state.paused) {
-  //   //   return true;
-  //   // }
-  //};
   componentDidUpdate(prevProps) {
-    // Only update when order changes from Redux
-    if (prevProps.order !== this.props.order) {
-      const { MediaList } = this.props.order;
+    const prevMediaList = prevProps.order?.MediaList || [];
+    const currentMediaList = this.props.order?.MediaList || [];
 
-      // clear timers
-      if (this.mediaTimer) { clearTimeout(this.mediaTimer); this.mediaTimer = null; }
-      if (this.videoTimer) { clearTimeout(this.videoTimer); this.videoTimer = null; }
+    // Update orientation if changed
+    if (prevProps.order?.Orientation !== this.props.order?.Orientation) {
+      this.updateOrientation(this.props.order?.Orientation);
+    }
 
-      this.setState({
-        loading: false,
-        videos: MediaList || [],
-        currentVideo: 0,
-      });
+    // Check if MediaList changed
+    const mediaChanged =
+      prevMediaList.length !== currentMediaList.length ||
+      JSON.stringify(prevMediaList) !== JSON.stringify(currentMediaList);
+
+    if (mediaChanged) {
+      console.log('[Media] MediaList updated, count:', currentMediaList.length);
+
+      // Clear any running timers
+      this.clearTimers();
+
+      this.setState(
+        {
+          loading: false,
+          videos: currentMediaList,
+          currentVideo: 0, // Reset to first media
+        },
+        () => {
+          // Start timer for first media item if it's an image
+          const firstItem = currentMediaList[0];
+          if (
+            firstItem &&
+            (firstItem.MediaType === 'image' || firstItem.MediaType === 'gif')
+          ) {
+            this.startMediaTimer(firstItem.Duration || 10);
+          }
+        },
+      );
     }
   }
 
   clearTimers = () => {
-    if (this.mediaTimer) { clearTimeout(this.mediaTimer); this.mediaTimer = null; }
-    if (this.videoTimer) { clearTimeout(this.videoTimer); this.videoTimer = null; }
-  }
-
-  startMediaTimer = (durationSeconds) => {
-    this.clearTimers();
-    const ms = Math.max(1, parseFloat(durationSeconds) || 5) * 1000;
-    this.mediaTimer = setTimeout(() => this.handleEnd(), ms);
-  }
-
-  onVideoLoad = (data, item) => {
-    const adminDuration = item?.Duration;
-    const natural = data?.duration || 0;
-    const useSec = (adminDuration && adminDuration > 0) ? adminDuration : (natural > 0 ? natural : 5);
-    if (useSec > 0) {
-      if (this.videoTimer) clearTimeout(this.videoTimer);
-      this.videoTimer = setTimeout(() => this.handleEnd(), useSec * 1000);
+    if (this.mediaTimer) {
+      clearTimeout(this.mediaTimer);
+      this.mediaTimer = null;
     }
-  }
-
-  handleEnd = () => {
-    this.clearTimers();
-
-    const { videos, currentVideo } = this.state;
-
-    if (!videos || videos.length === 0) return;
-
-    if (videos.length === 1) {
-      this.setState({ currentVideo: 0 });
-      return;
-    }
-
-    if (currentVideo >= videos.length - 1) {
-      this.setState({ currentVideo: 0 });
-    } else {
-      this.setState({ currentVideo: currentVideo + 1 });
+    if (this.videoTimer) {
+      clearTimeout(this.videoTimer);
+      this.videoTimer = null;
     }
   };
 
+  startMediaTimer = durationSeconds => {
+    this.clearTimers();
+    const duration = parseFloat(durationSeconds) || 10;
+    const ms = duration * 1000;
+
+    console.log(`[Media] Starting timer for ${duration}s (${ms}ms)`);
+
+    this.mediaTimer = setTimeout(() => {
+      console.log('[Media] Timer expired, advancing to next media');
+      this.handleEnd();
+    }, ms);
+  };
+
+  onVideoLoad = (data, item) => {
+    console.log('[Media] Video loaded:', item.MediaName);
+    console.log(
+      '[Media] Video natural duration:',
+      data?.duration,
+      'Admin duration:',
+      item?.Duration,
+    );
+
+    // Clear any existing timers
+    this.clearTimers();
+
+    // Use admin Duration if set, otherwise use natural video duration
+    const adminDuration = item?.Duration;
+    const naturalDuration = data?.duration || 0;
+
+    let useDuration;
+    if (adminDuration && adminDuration > 0) {
+      useDuration = adminDuration;
+      console.log('[Media] Using admin duration:', useDuration);
+    } else if (naturalDuration > 0) {
+      useDuration = naturalDuration;
+      console.log('[Media] Using natural video duration:', useDuration);
+    } else {
+      useDuration = 10; // Fallback
+      console.log('[Media] Using fallback duration:', useDuration);
+    }
+
+    // Set timer to advance after video duration
+    this.videoTimer = setTimeout(() => {
+      console.log('[Media] Video duration elapsed, advancing');
+      this.handleEnd();
+    }, useDuration * 1000);
+  };
+
+  handleEnd = () => {
+    console.log('[Media] handleEnd called');
+    this.clearTimers();
+
+    const {videos, currentVideo} = this.state;
+
+    if (!videos || videos.length === 0) {
+      console.log('[Media] No videos to display');
+      return;
+    }
+
+    // Single media - just restart timer
+    if (videos.length === 1) {
+      console.log('[Media] Single media, restarting');
+      const item = videos[0];
+      if (item.MediaType === 'image' || item.MediaType === 'gif') {
+        this.startMediaTimer(item.Duration || 10);
+      }
+      return;
+    }
+
+    // Multiple media - advance to next
+    const nextIndex = currentVideo >= videos.length - 1 ? 0 : currentVideo + 1;
+
+    console.log(`[Media] Advancing from ${currentVideo} to ${nextIndex}`);
+
+    this.setState({currentVideo: nextIndex}, () => {
+      // Start timer for the new media if it's an image
+      const nextItem = videos[nextIndex];
+      if (nextItem && (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif')) {
+        this.startMediaTimer(nextItem.Duration || 10);
+      }
+    });
+  };
 
   componentWillUnmount() {
     this.clearTimers();
+
     if (this.dimensionSubscription && typeof this.dimensionSubscription.remove === 'function') {
       this.dimensionSubscription.remove();
     }
+
     if (this.interval) {
       clearInterval(this.interval);
       this.interval = null;
     }
+
     if (this.timeout) {
       clearTimeout(this.timeout);
       this.timeout = null;
     }
   }
 
+  renderView = () => {
+    const {videos, currentVideo, width, height} = this.state;
+
+    if (!videos || videos.length === 0) {
+      return (
+        <View style={styles.centerContainer}>
+          <Text style={styles.noMediaText}>No media to display</Text>
+        </View>
+      );
+    }
+
+    const currentItem = videos[currentVideo];
+
+    if (!currentItem) {
+      return (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator color={'#FFA500'} size="large" />
+        </View>
+      );
+    }
+
+    console.log(
+      `[Media] Rendering ${currentVideo + 1}/${videos.length}: ${currentItem.MediaName} (${currentItem.MediaType})`,
+    );
+
+    // Render Image
+    if (currentItem.MediaType === 'image' || currentItem.MediaType === 'gif') {
+      return (
+        <View style={styles.centerContainer}>
+          <Image
+            key={`image-${currentVideo}-${currentItem.MediaId}`}
+            resizeMode={'stretch'}
+            source={{uri: currentItem.MediaPath}}
+            onLoad={() => {
+              console.log(
+                `[Media] Image loaded: ${currentItem.MediaName}, Duration: ${currentItem.Duration}s`,
+              );
+              // Start timer when image loads
+              this.startMediaTimer(currentItem.Duration || 10);
+            }}
+            onError={error => {
+              console.log(
+                `[Media] Image error for ${currentItem.MediaName}:`,
+                error.nativeEvent.error,
+              );
+              // Skip to next on error
+              this.handleEnd();
+            }}
+            style={{width, height}}
+          />
+        </View>
+      );
+    }
+
+    // Render Video
+    if (currentItem.MediaType === 'video') {
+      return (
+        <View style={styles.centerContainer}>
+          <StatusBar translucent backgroundColor="transparent" />
+          <Video
+            key={`video-${currentVideo}-${currentItem.MediaId}`}
+            source={{
+              uri:
+                currentItem.MediaPath
+                  ? convertToProxyURL(currentItem.MediaPath)
+                  : null,
+            }}
+            resizeMode={'stretch'}
+            repeat={false}
+            paused={false}
+            onLoad={data => this.onVideoLoad(data, currentItem)}
+            onEnd={() => {
+              console.log(`[Media] Video onEnd: ${currentItem.MediaName}`);
+              this.handleEnd();
+            }}
+            onError={error => {
+              console.log(
+                `[Media] Video error for ${currentItem.MediaName}:`,
+                error,
+              );
+              // Skip to next on error
+              this.handleEnd();
+            }}
+            style={{width, height}}
+          />
+        </View>
+      );
+    }
+
+    // Unsupported media type
+    return (
+      <View style={styles.centerContainer}>
+        <Text style={styles.errorText}>
+          Unsupported media type: {currentItem.MediaType}
+        </Text>
+      </View>
+    );
+  };
+
   render() {
     return (
-      <>
-        {/* <View>
-          <Modal
-            backdropOpacity={0}
-            isVisible={this.state.modalVisible}
-            onBackdropPress={() => {
-              this.setState({modalVisible: false});
-            }}
-            style={{
-              backgroundColor: 'white',
-              height: '50%',
-              width: '50%',
-              alignSelf: 'center',
-            }}>
-            <View style={{height: '100%', width: '100%', marginTop: 10}}>
-              <Image
-                source={logo}
-                style={{height: 100, width: 100, alignSelf: 'center'}}
-              />
-              <Text
-                style={{
-                  textAlign: 'center',
-                  marginTop: 15,
-                  fontWeight: 'bold',
-                  fontSize: 18,
-                }}>
-                New Version Available
-              </Text>
-              <Text style={{textAlign: 'center', marginTop: 15, fontSize: 16}}>
-                Please update to get latest features and best experience
-              </Text>
-              <TouchableOpacity
-                onPress={this.updateApp}
-                style={{
-                  backgroundColor: '#FFA500',
-                  height: '20%',
-                  width: '100%',
-                  position: 'absolute',
-                  top: '80%',
-                  justifyContent: 'center',
-                }}>
-                <Text
-                  style={{
-                    color: 'white',
-                    textAlign: 'center',
-                    fontWeight: 'bold',
-                    fontSize: 15,
-                  }}>
-                  UPDATE NOW
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => this.setState({modalVisible: false})}
-                style={{
-                  position: 'absolute',
-                  right: 0,
-                  top: 5,
-                  paddingRight: 15,
-                }}>
-                <Text style={{fontSize: 20}}>X</Text>
-              </TouchableOpacity>
-            </View>
-            <View></View>
-          </Modal>
-        </View> */}
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: '#fff',
-            justifyContent: 'center',
-            alignItems: 'center',
-          }}>
-          {this.state.loading ? (
+      <View style={styles.container}>
+        {this.state.loading ? (
+          <View style={styles.centerContainer}>
             <ActivityIndicator color={'#FFA500'} size="large" />
-          ) : (
-            this.renderView()
-          )}
-        </View>
-      </>
+            <Text style={styles.loadingText}>Loading media...</Text>
+          </View>
+        ) : (
+          this.renderView()
+        )}
+      </View>
     );
   }
 }
+
 const styles = StyleSheet.create({
-  backgroundVideo: {
-    position: 'absolute',
-    //  width:responsiveWidth(100),
-    //height:responsiveHeight(100),
-    top: 0, //responsiveWidth(42),
-    left: 0, // -responsiveHeight(22),
-    bottom: 0, // responsiveWidth(42),
-    right: 0, //0 -responsiveHeight(22),
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  centerContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#fff',
+    marginTop: 10,
+    fontSize: 16,
+  },
+  noMediaText: {
+    color: '#fff',
+    fontSize: 18,
+  },
+  errorText: {
+    color: '#f00',
+    fontSize: 18,
+    padding: 20,
+    textAlign: 'center',
   },
 });
+
 const mapStateToProps = state => ({
   order: state.restaurant.order,
 });

@@ -69,9 +69,9 @@ class Media extends Component {
     // Fetch data immediately
     this.getdta();
 
-    // Poll every 60 seconds
+    // ✅ Poll every 30 seconds (reduced from 60) to catch schedule changes faster
     if (!this.interval) {
-      this.interval = setInterval(() => this.getdta(), 60000);
+      this.interval = setInterval(() => this.getdta(), 30000); // 30 seconds
     }
 
     // Auto-restart timeout
@@ -125,13 +125,15 @@ class Media extends Component {
       this.updateOrientation(this.props.order?.Orientation);
     }
 
-    // Check if MediaList changed
+    // ✅ Check if MediaList actually changed (compare content, not just length)
     const mediaChanged =
       prevMediaList.length !== currentMediaList.length ||
-      JSON.stringify(prevMediaList) !== JSON.stringify(currentMediaList);
+      JSON.stringify(prevMediaList.map(m => ({ref: m.MediaRef, dur: m.Duration, pri: m.Priority}))) !==
+      JSON.stringify(currentMediaList.map(m => ({ref: m.MediaRef, dur: m.Duration, pri: m.Priority})));
 
     if (mediaChanged) {
       console.log('[Media] MediaList updated, count:', currentMediaList.length);
+      console.log('[Media] New playlist:', currentMediaList.map(m => `${m.MediaName} (${m.Duration}s)`).join(', '));
 
       // Clear any running timers
       this.clearTimers();

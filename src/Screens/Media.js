@@ -32,6 +32,7 @@ import logo from '../Assets/Logos/ideogram_logo.png';
 import {checkVersion} from 'react-native-check-version';
 
 import convertToProxyURL from 'react-native-video-cache';
+import { updateHeartbeatData } from '../services/monitorHeartbeat';
 
 class Media extends Component {
   constructor() {
@@ -125,7 +126,7 @@ class Media extends Component {
       this.updateOrientation(this.props.order?.Orientation);
     }
 
-    // ✅ Check if MediaList actually changed (compare content, not just length)
+    // Check if MediaList actually changed
     const mediaChanged =
       prevMediaList.length !== currentMediaList.length ||
       JSON.stringify(prevMediaList.map(m => ({ref: m.MediaRef, dur: m.Duration, pri: m.Priority}))) !==
@@ -133,7 +134,17 @@ class Media extends Component {
 
     if (mediaChanged) {
       console.log('[Media] MediaList updated, count:', currentMediaList.length);
-      console.log('[Media] New playlist:', currentMediaList.map(m => `${m.MediaName} (${m.Duration}s)`).join(', '));
+
+      // ✅ NEW: Update heartbeat with current playlist info
+      const playlistName = this.props.order?.DefaultPlaylistName || 'Default';
+      const scheduleRef = this.props.order?.ScheduleRef || null;
+      const playlistType = scheduleRef ? 'Scheduled' : 'Default';
+
+      updateHeartbeatData({
+        currentPlaylist: playlistName,
+        playlistType: playlistType,
+        scheduleRef: scheduleRef
+      });
 
       // Clear any running timers
       this.clearTimers();
@@ -142,10 +153,9 @@ class Media extends Component {
         {
           loading: false,
           videos: currentMediaList,
-          currentVideo: 0, // Reset to first media
+          currentVideo: 0,
         },
         () => {
-          // Start timer for first media item if it's an image
           const firstItem = currentMediaList[0];
           if (
             firstItem &&

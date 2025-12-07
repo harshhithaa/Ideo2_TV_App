@@ -18,6 +18,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { fetchscreenref, updateOrder } from '../services/Restaurant/actions';
 import { connect } from 'react-redux';
 import logo from '../Assets/Logos/ideogram_logo.png';
+import { Alert } from 'react-native';
 
 class PhoneAuth extends Component {
   passwordInputRef = createRef();
@@ -28,17 +29,75 @@ class PhoneAuth extends Component {
     screen: '',
     passwordHidden: true,
     keyboardVisible: false,
+    keyboardHeight: 0,
   };
 
+  // focus count and blur timeout used to keep layout elevated while switching fields
+  focusCount = 0;
+  blurTimeout = null;
+  _keyboardDidShowSub = null;
+  _keyboardDidHideSub = null;
+
   componentDidMount() {
-    this._keyboardDidShow = Keyboard.addListener('keyboardDidShow', () => this.setState({ keyboardVisible: true }));
-    this._keyboardDidHide = Keyboard.addListener('keyboardDidHide', () => this.setState({ keyboardVisible: false }));
+    // Use keyboard event listeners that provide keyboard height
+    this._keyboardDidShowSub = Keyboard.addListener('keyboardDidShow', this._keyboardDidShow);
+    this._keyboardDidHideSub = Keyboard.addListener('keyboardDidHide', this._keyboardDidHide);
   }
 
   componentWillUnmount() {
-    this._keyboardDidShow?.remove();
-    this._keyboardDidHide?.remove();
+    // cleanup keyboard listeners and blur timeout
+    this._keyboardDidShowSub?.remove();
+    this._keyboardDidHideSub?.remove();
+    if (this.blurTimeout) {
+      clearTimeout(this.blurTimeout);
+      this.blurTimeout = null;
+    }
   }
+
+  _keyboardDidShow = (e) => {
+    // capture keyboard height and mark visible
+    const height = e?.endCoordinates?.height || 300;
+    this.focusCount = Math.max(1, this.focusCount);
+    if (this.blurTimeout) {
+      clearTimeout(this.blurTimeout);
+      this.blurTimeout = null;
+    }
+    this.setState({ keyboardVisible: true, keyboardHeight: height });
+  };
+
+  _keyboardDidHide = () => {
+    // FIXED: Immediately lower page when keyboard disappears (no debounce)
+    // Reset all state that tracks keyboard presence
+    if (this.blurTimeout) {
+      clearTimeout(this.blurTimeout);
+      this.blurTimeout = null;
+    }
+    this.focusCount = 0;
+    // Immediately set keyboard invisible and return page to original position
+    this.setState({ keyboardVisible: false, keyboardHeight: 0 });
+  };
+
+  // Called on TextInput focus
+  handleInputFocus = () => {
+    if (this.blurTimeout) {
+      clearTimeout(this.blurTimeout);
+      this.blurTimeout = null;
+    }
+    this.focusCount = (this.focusCount || 0) + 1;
+    this.setState({ keyboardVisible: true });
+  };
+
+  // Called on TextInput blur; debounce decrement so quick field switches don't collapse UI
+  handleInputBlur = () => {
+    if (this.blurTimeout) {
+      clearTimeout(this.blurTimeout);
+    }
+    this.blurTimeout = setTimeout(() => {
+      this.focusCount = Math.max(0, (this.focusCount || 0) - 1);
+      // Do NOT lower UI here — rely on keyboardDidHide to lower the UI when keyboard is actually dismissed.
+      this.blurTimeout = null;
+    }, 250); // 250ms debounce for smooth switching
+  };
 
   signIn = () => {
     NetInfo.fetch().then((isConnected) => {
@@ -65,6 +124,12 @@ class PhoneAuth extends Component {
   };
 
   render() {
+    // Reduce shift to ~60% of keyboard height so "Screen Name" stays fully visible
+    const effectiveShift = this.state.keyboardVisible
+      ? (this.state.keyboardHeight || 240) * 0.6
+      : 0;
+    const shiftStyle = { transform: [{ translateY: -effectiveShift }] };
+
     // Two-column split: left branding, right form
     return (
       <SafeAreaView style={styles.container}>
@@ -83,11 +148,11 @@ class PhoneAuth extends Component {
             </View>
 
             {/* RIGHT: Login form */}
-            <View style={styles.rightCol}>
+            <View style={[styles.rightCol, shiftStyle]}>
               <ScrollView contentContainerStyle={styles.formScroll} keyboardShouldPersistTaps="handled">
                 <View style={styles.formInner}>
+                  {/* Sign In heading - subtitle removed permanently */}
                   <Text style={styles.signInHeading}>Sign In</Text>
-                  <Text style={styles.signInSub}>Enter your credentials to access the platform</Text>
 
                   {/* Screen Name (was Email Address) - placeholder as label inside field */}
                   <View style={styles.field}>
@@ -101,6 +166,8 @@ class PhoneAuth extends Component {
                       returnKeyType="next"
                       keyboardType="default"
                       onSubmitEditing={() => this.passwordInputRef.current?.focus?.()}
+                      onFocus={this.handleInputFocus}
+                      onBlur={this.handleInputBlur}
                     />
                   </View>
 
@@ -116,6 +183,8 @@ class PhoneAuth extends Component {
                       style={[styles.textInput, { paddingRight: 80 }]}
                       returnKeyType="done"
                       onSubmitEditing={this.signIn}
+                      onFocus={this.handleInputFocus}
+                      onBlur={this.handleInputBlur}
                     />
                     <TouchableOpacity onPress={this.togglePassword} style={styles.showBtn}>
                       <Text style={styles.showText}>{this.state.passwordHidden ? 'Show' : 'Hide'}</Text>
@@ -155,9 +224,8 @@ const styles = StyleSheet.create({
   formScroll: { flexGrow: 1, justifyContent: 'center' },
   formInner: { width: '100%', maxWidth: 520, alignSelf: 'center' },
 
-  // Slightly reduced Sign In heading size for better balance
-  signInHeading: { fontSize: responsiveFontSize(2.6), fontWeight: '700', color: '#111', marginBottom: 6 },
-  signInSub: { fontSize: responsiveFontSize(1.6), color: '#666', marginBottom: 18 },
+  // FIXED: Sign In heading with reduced bottom margin (was 24, now 12) to keep heading visible
+  signInHeading: { fontSize: responsiveFontSize(2.6), fontWeight: '700', color: '#111', marginBottom: 12 },
 
   // Field container: white background, subtle rounded corners, thin border (kept styling)
   field: {

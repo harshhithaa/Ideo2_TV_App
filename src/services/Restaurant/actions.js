@@ -26,7 +26,6 @@ export const fetchItems = callback => async dispatch => {
       return;
     }
 
-    // use baseUrl from util.js so emulator/host mapping is correct
     const url = `${baseUrl}monitor/fetchmonitordetails`;
     console.log('[fetchItems] POST', url, 'MonitorRef=', token.MonitorRef);
 
@@ -52,7 +51,6 @@ export const fetchItems = callback => async dispatch => {
       return;
     }
 
-    // Normalize details payload
     const details = items.Details || items.details || items || {};
     console.log('[fetchItems] Details:', details);
 
@@ -73,12 +71,10 @@ export const fetchItems = callback => async dispatch => {
  * -------------------------
  * LOGIN (Monitor Login)
  * -------------------------
- * Called from Login Screen
- * -------------------------
  */
 export const fetchscreenref = (payload, callback) => async dispatch => {
   try {
-    console.log("Attempt login...");
+    console.log("[Login] Attempting login...");
 
     const response = await axios({
       method: 'POST',
@@ -92,7 +88,7 @@ export const fetchscreenref = (payload, callback) => async dispatch => {
     });
 
     const items = response.data;
-    console.log("Login Response:", items);
+    console.log("[Login] Response:", items);
 
     if (items?.Error) {
       callback({ err: items.Error });
@@ -113,12 +109,18 @@ export const fetchscreenref = (payload, callback) => async dispatch => {
       payload: updatedUser,
     });
 
-    // NEW: start heartbeat after login (immediate + periodic)
-    startMonitorHeartbeat(updatedUser, 30000);
+    // ✅ START HEARTBEAT AFTER SUCCESSFUL LOGIN
+    console.log("[Login] Starting heartbeat for monitor:", updatedUser.MonitorRef);
+    startMonitorHeartbeat({
+      monitorRef: updatedUser.MonitorRef,
+      currentPlaylist: 'Default', // Will be updated when media loads
+      playlistType: 'Default',
+      scheduleRef: null
+    }, 30000); // Send heartbeat every 30 seconds
 
     callback(); // success
   } catch (error) {
-    console.log("Login Error:", error);
+    console.log("[Login] Error:", error);
     callback(error.message || error);
   }
 };

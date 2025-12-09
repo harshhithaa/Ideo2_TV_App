@@ -4,7 +4,13 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-community/async-storage';
 import VersionCheck from 'react-native-version-check';
 import { baseUrl } from '../util';
-import { startMonitorHeartbeat, stopMonitorHeartbeat } from '../monitorHeartbeat';
+import { 
+  initializeSocket, 
+  startMonitorHeartbeat, 
+  stopMonitorHeartbeat,
+  updateHeartbeatData,
+  disconnectSocket 
+} from '../monitorHeartbeat';
 
 let version = VersionCheck.getCurrentVersion();
 
@@ -67,11 +73,6 @@ export const fetchItems = callback => async dispatch => {
   }
 };
 
-/**
- * -------------------------
- * LOGIN (Monitor Login)
- * -------------------------
- */
 export const fetchscreenref = (payload, callback) => async dispatch => {
   try {
     console.log("[Login] Attempting login...");
@@ -109,27 +110,27 @@ export const fetchscreenref = (payload, callback) => async dispatch => {
       payload: updatedUser,
     });
 
-    // ✅ START HEARTBEAT AFTER SUCCESSFUL LOGIN
+    // Initialize Socket.IO connection
+    console.log("[Login] Initializing socket connection");
+    await initializeSocket();
+
+    // Start heartbeat after successful login
     console.log("[Login] Starting heartbeat for monitor:", updatedUser.MonitorRef);
     startMonitorHeartbeat({
       monitorRef: updatedUser.MonitorRef,
-      currentPlaylist: 'Default', // Will be updated when media loads
+      monitorName: updatedUser.MonitorName,
+      currentPlaylist: 'Default',
       playlistType: 'Default',
-      scheduleRef: null
-    }, 30000); // Send heartbeat every 30 seconds
+      scheduleRef: null,
+    }, 30000);
 
-    callback(); // success
+    callback();
   } catch (error) {
     console.log("[Login] Error:", error);
     callback(error.message || error);
   }
 };
 
-/**
- * -------------------------
- * UPDATE ORDER / USER
- * -------------------------
- */
 export const updateOrder = (payload, callback) => dispatch => {
   dispatch({
     type: SET_WALLET,
@@ -138,3 +139,6 @@ export const updateOrder = (payload, callback) => dispatch => {
 
   callback?.();
 };
+
+// Export heartbeat functions for use in components
+export { updateHeartbeatData, stopMonitorHeartbeat, disconnectSocket };

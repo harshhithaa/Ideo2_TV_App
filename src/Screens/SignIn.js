@@ -52,6 +52,8 @@ class PhoneAuth extends Component {
       clearTimeout(this.blurTimeout);
       this.blurTimeout = null;
     }
+    
+    // ❌ REMOVE THIS LINE - Don't disconnect socket after login!
   }
 
   _keyboardDidShow = (e) => {

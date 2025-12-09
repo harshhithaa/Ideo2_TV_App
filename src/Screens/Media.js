@@ -135,7 +135,7 @@ class Media extends Component {
     if (mediaChanged) {
       console.log('[Media] MediaList updated, count:', currentMediaList.length);
 
-      // ✅ NEW: Update heartbeat with current playlist info
+      // ✅ NEW: Update heartbeat with playlist info
       const playlistName = this.props.order?.DefaultPlaylistName || 'Default';
       const scheduleRef = this.props.order?.ScheduleRef || null;
       const playlistType = scheduleRef ? 'Scheduled' : 'Default';
@@ -143,7 +143,10 @@ class Media extends Component {
       updateHeartbeatData({
         currentPlaylist: playlistName,
         playlistType: playlistType,
-        scheduleRef: scheduleRef
+        scheduleRef: scheduleRef,
+        totalMedia: currentMediaList.length,
+        mediaIndex: 0,
+        currentMedia: currentMediaList[0]?.MediaName || null,
       });
 
       // Clear any running timers
@@ -252,6 +255,13 @@ class Media extends Component {
     const nextIndex = currentVideo >= videos.length - 1 ? 0 : currentVideo + 1;
 
     console.log(`[Media] Advancing from ${currentVideo} to ${nextIndex}`);
+
+    // ✅ NEW: Update heartbeat with new media info
+    const nextItem = videos[nextIndex];
+    updateHeartbeatData({
+      mediaIndex: nextIndex,
+      currentMedia: nextItem?.MediaName || null,
+    });
 
     this.setState({currentVideo: nextIndex}, () => {
       // Start timer for the new media if it's an image

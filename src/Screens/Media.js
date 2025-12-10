@@ -33,6 +33,7 @@ import {checkVersion} from 'react-native-check-version';
 
 import convertToProxyURL from 'react-native-video-cache';
 import { updateHeartbeatData } from '../services/monitorHeartbeat';
+import healthMonitor from '../services/healthMonitor';
 
 class Media extends Component {
   constructor() {
@@ -64,15 +65,18 @@ class Media extends Component {
     SystemNavigationBar.navigationHide();
     KeepAwake.activate();
 
+    // ✅ Start health monitoring
+    healthMonitor.start();
+
     // Set orientation based on initial data
     this.updateOrientation(this.props.order?.Orientation);
 
     // Fetch data immediately
     this.getdta();
 
-    // ✅ Poll every 30 seconds (reduced from 60) to catch schedule changes faster
+    // Poll every 30 seconds
     if (!this.interval) {
-      this.interval = setInterval(() => this.getdta(), 30000); // 30 seconds
+      this.interval = setInterval(() => this.getdta(), 30000);
     }
 
     // Auto-restart timeout
@@ -103,16 +107,20 @@ class Media extends Component {
   getdta = () => {
     NetInfo.fetch().then(state => {
       if (state.isConnected) {
-        console.log('[Media] Fetching items from API...');
         this.props.fetchItems(err => {
           if (err) {
-            console.log('[Media] Fetch error:', err);
+            console.log('[Media] fetchItems error:', err);
+            // ✅ Report network error to health monitor
+            healthMonitor.reportNetworkError(err);
           } else {
-            console.log('[Media] Fetch success');
+            // ✅ Clear network errors on success
+            healthMonitor.clearError('network_error');
           }
         });
       } else {
         console.log('[Media] No internet connection');
+        // ✅ Report network error
+        healthMonitor.reportNetworkError('No internet connection');
       }
     });
   };
@@ -135,11 +143,19 @@ class Media extends Component {
     if (mediaChanged) {
       console.log('[Media] MediaList updated, count:', currentMediaList.length);
 
-      // ✅ NEW: Update heartbeat with playlist info
       const playlistName = this.props.order?.DefaultPlaylistName || 'Default';
       const scheduleRef = this.props.order?.ScheduleRef || null;
       const playlistType = scheduleRef ? 'Scheduled' : 'Default';
 
+      // ✅ Update health monitor with playlist info
+      healthMonitor.updatePlaylist(
+        playlistName,
+        playlistType,
+        scheduleRef,
+        currentMediaList.length
+      );
+
+      // Update heartbeat
       updateHeartbeatData({
         currentPlaylist: playlistName,
         playlistType: playlistType,
@@ -149,7 +165,6 @@ class Media extends Component {
         currentMedia: currentMediaList[0]?.MediaName || null,
       });
 
-      // Clear any running timers
       this.clearTimers();
 
       this.setState(
@@ -159,14 +174,16 @@ class Media extends Component {
           currentVideo: 0,
         },
         () => {
-          const firstItem = currentMediaList[0];
-          if (
-            firstItem &&
-            (firstItem.MediaType === 'image' || firstItem.MediaType === 'gif')
-          ) {
-            this.startMediaTimer(firstItem.Duration || 10);
+          if (currentMediaList.length > 0) {
+            const firstItem = currentMediaList[0];
+            // ✅ Update health monitor with first media
+            healthMonitor.updateMedia(firstItem.MediaName, 0);
+            
+            if (firstItem.MediaType === 'image' || firstItem.MediaType === 'gif') {
+              this.startMediaTimer(firstItem.Duration);
+            }
           }
-        },
+        }
       );
     }
   }
@@ -228,6 +245,9 @@ class Media extends Component {
       console.log('[Media] Video duration elapsed, advancing');
       this.handleEnd();
     }, useDuration * 1000);
+
+    // ✅ Clear media load errors
+    healthMonitor.clearError('media_load');
   };
 
   handleEnd = () => {
@@ -245,19 +265,24 @@ class Media extends Component {
     if (videos.length === 1) {
       console.log('[Media] Single media, restarting');
       const item = videos[0];
+      // ✅ Update health monitor - media restarted
+      healthMonitor.updateMedia(item.MediaName, 0);
+      
       if (item.MediaType === 'image' || item.MediaType === 'gif') {
-        this.startMediaTimer(item.Duration || 10);
+        this.startMediaTimer(item.Duration);
       }
       return;
     }
 
     // Multiple media - advance to next
     const nextIndex = currentVideo >= videos.length - 1 ? 0 : currentVideo + 1;
+    const nextItem = videos[nextIndex];
 
     console.log(`[Media] Advancing from ${currentVideo} to ${nextIndex}`);
 
-    // ✅ NEW: Update heartbeat with new media info
-    const nextItem = videos[nextIndex];
+    // ✅ Update health monitor with new media
+    healthMonitor.updateMedia(nextItem?.MediaName, nextIndex);
+
     updateHeartbeatData({
       mediaIndex: nextIndex,
       currentMedia: nextItem?.MediaName || null,
@@ -267,12 +292,15 @@ class Media extends Component {
       // Start timer for the new media if it's an image
       const nextItem = videos[nextIndex];
       if (nextItem && (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif')) {
-        this.startMediaTimer(nextItem.Duration || 10);
+        this.startMediaTimer(nextItem.Duration);
       }
     });
   };
 
   componentWillUnmount() {
+    // ✅ Stop health monitoring
+    healthMonitor.stop();
+    
     this.clearTimers();
 
     if (this.dimensionSubscription && typeof this.dimensionSubscription.remove === 'function') {
@@ -294,6 +322,9 @@ class Media extends Component {
     const {videos, currentVideo, width, height} = this.state;
 
     if (!videos || videos.length === 0) {
+      // ✅ Report to health monitor
+      healthMonitor.addError('no_media', 'No media to display');
+      
       return (
         <View style={styles.centerContainer}>
           <Text style={styles.noMediaText}>No media to display</Text>
@@ -324,18 +355,18 @@ class Media extends Component {
             resizeMode={'stretch'}
             source={{uri: currentItem.MediaPath}}
             onLoad={() => {
-              console.log(
-                `[Media] Image loaded: ${currentItem.MediaName}, Duration: ${currentItem.Duration}s`,
-              );
-              // Start timer when image loads
-              this.startMediaTimer(currentItem.Duration || 10);
+              console.log('[Media] Image loaded successfully');
+              // ✅ Clear media errors
+              healthMonitor.clearError('media_load');
+              this.startMediaTimer(currentItem.Duration);
             }}
             onError={error => {
-              console.log(
-                `[Media] Image error for ${currentItem.MediaName}:`,
-                error.nativeEvent.error,
+              console.log('[Media] Image load error:', error.nativeEvent.error);
+              // ✅ Report media error
+              healthMonitor.reportMediaError(
+                currentItem.MediaName,
+                error.nativeEvent.error
               );
-              // Skip to next on error
               this.handleEnd();
             }}
             style={{width, height}}
@@ -352,26 +383,30 @@ class Media extends Component {
           <Video
             key={`video-${currentVideo}-${currentItem.MediaId}`}
             source={{
-              uri:
-                currentItem.MediaPath
-                  ? convertToProxyURL(currentItem.MediaPath)
-                  : null,
+              uri: currentItem.MediaPath
+                ? convertToProxyURL(currentItem.MediaPath)
+                : null,
             }}
             resizeMode={'stretch'}
             repeat={false}
             paused={false}
             onLoad={data => this.onVideoLoad(data, currentItem)}
             onEnd={() => {
-              console.log(`[Media] Video onEnd: ${currentItem.MediaName}`);
+              console.log('[Media] Video ended naturally');
               this.handleEnd();
             }}
             onError={error => {
-              console.log(
-                `[Media] Video error for ${currentItem.MediaName}:`,
-                error,
+              console.log('[Media] Video error:', error);
+              // ✅ Report media error
+              healthMonitor.reportMediaError(
+                currentItem.MediaName,
+                JSON.stringify(error)
               );
-              // Skip to next on error
               this.handleEnd();
+            }}
+            // ✅ Track playback progress
+            onProgress={progress => {
+              healthMonitor.updatePlaybackPosition(progress.currentTime);
             }}
             style={{width, height}}
           />
@@ -379,7 +414,6 @@ class Media extends Component {
       );
     }
 
-    // Unsupported media type
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>

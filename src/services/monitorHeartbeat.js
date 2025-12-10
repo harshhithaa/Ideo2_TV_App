@@ -1,8 +1,8 @@
 import VersionCheck from 'react-native-version-check';
-import axios from 'axios';
 import io from 'socket.io-client';
 import AsyncStorage from '@react-native-community/async-storage';
 import { baseUrl } from './util';
+import healthMonitor from './healthMonitor'; // ✅ Import health monitor
 
 let socket = null;
 let heartbeatInterval = null;
@@ -104,7 +104,7 @@ export const initializeSocket = async () => {
 };
 
 /**
- * Send status update via socket
+ * Send status update via socket - ✅ Now includes health data
  */
 const sendStatusUpdate = () => {
   if (!socket || !socket.connected) {
@@ -112,20 +112,34 @@ const sendStatusUpdate = () => {
     return;
   }
 
+  // ✅ Get comprehensive health state
+  const healthState = healthMonitor.getHealthState();
+
   const statusData = {
     monitorRef: currentHeartbeatData.monitorRef,
     monitorName: currentHeartbeatData.monitorName,
-    currentPlaylist: currentHeartbeatData.currentPlaylist,
-    playlistType: currentHeartbeatData.playlistType,
-    scheduleRef: currentHeartbeatData.scheduleRef,
-    currentMedia: currentHeartbeatData.currentMedia,
-    mediaIndex: currentHeartbeatData.mediaIndex,
-    totalMedia: currentHeartbeatData.totalMedia,
+    
+    // ✅ Use actual state from health monitor
+    currentPlaylist: healthState.currentPlaylist,
+    playlistType: healthState.playlistType,
+    scheduleRef: healthState.scheduleRef,
+    currentMedia: healthState.currentMedia,
+    mediaIndex: healthState.mediaIndex,
+    totalMedia: healthState.totalMedia,
+    
+    // ✅ Add health metrics
+    playbackPosition: healthState.playbackPosition,
+    isProgressing: healthState.isProgressing,
+    screenState: healthState.screenState,
+    errors: healthState.errors,
+    healthStatus: healthState.healthStatus,
+    lastMediaChange: healthState.lastMediaChange,
+    
     timestamp: new Date().toISOString(),
   };
 
   console.log('[Socket] Sending status:', statusData);
-  socket.emit('status_response', statusData); // ✅ Match backend event name
+  socket.emit('status_response', statusData);
 };
 
 /**

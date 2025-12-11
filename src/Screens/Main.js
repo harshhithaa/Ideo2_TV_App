@@ -29,6 +29,9 @@ import Modal from 'react-native-modal';
 import logo from '../Assets/Logos/ideogram_logo.png';
 import {checkVersion} from 'react-native-check-version';
 import convertToProxyURL from 'react-native-video-cache';
+// ✅ ADD: Import health monitor
+import healthMonitor from '../services/healthMonitor';
+import { updateHeartbeatData } from '../services/monitorHeartbeat';
 
 class Main extends Component {
   constructor() {
@@ -39,7 +42,6 @@ class Main extends Component {
       modalVisible: false,
       loading: true,
       videos: [],
-      // slideTime removed
       openConnectionModal: false,
       isErrored: false,
       errorMessage: '',
@@ -49,26 +51,33 @@ class Main extends Component {
 
     this.mediaTimer = null;
     this.videoTimer = null;
-
-    // Store subscription reference for cleanup
     this.dimensionSubscription = null;
     this.interval = null;
     this.timeout = null;
   }
 
   componentDidMount = async () => {
-    // Setup screen display
     StatusBar.setHidden(true);
     SystemNavigationBar.navigationHide();
     KeepAwake.activate();
 
-    // New way to listen to dimension changes (fixes deprecation warning)
+    // ✅ ADD: Start health monitoring
+    healthMonitor.start();
+
     this.dimensionSubscription = Dimensions.addEventListener('change', e => {
       this.setState({width: e.window.width, height: e.window.height});
     });
 
     // Fetch initial playlist
-    this.props.fetchItems(() => {
+    this.props.fetchItems((error) => {
+      if (error) {
+        console.log('[Main] fetchItems error:', error);
+        // ✅ ADD: Report network error
+        healthMonitor.reportNetworkError(error);
+      } else {
+        // ✅ ADD: Clear network errors on success
+        healthMonitor.clearError('network_error');
+      }
       this.setState({loading: false});
     });
 
@@ -82,6 +91,9 @@ class Main extends Component {
   };
 
   componentWillUnmount() {
+    // ✅ ADD: Stop health monitoring
+    healthMonitor.stop();
+    
     this.clearTimers();
     if (this.dimensionSubscription && typeof this.dimensionSubscription.remove === 'function') {
       this.dimensionSubscription.remove();
@@ -105,8 +117,18 @@ class Main extends Component {
   getdta = () => {
     NetInfo.fetch().then(state => {
       if (state.isConnected) {
-        console.log(this.props.order.error, 'vid');
-        this.props.fetchItems(error => {});
+        this.props.fetchItems(error => {
+          if (error) {
+            // ✅ ADD: Report network error
+            healthMonitor.reportNetworkError(error);
+          } else {
+            // ✅ ADD: Clear network errors
+            healthMonitor.clearError('network_error');
+          }
+        });
+      } else {
+        // ✅ ADD: Report no connection
+        healthMonitor.reportNetworkError('No internet connection');
       }
     });
   };
@@ -118,30 +140,39 @@ class Main extends Component {
 
   startMediaTimer = (durationSeconds) => {
     this.clearTimers();
-    const ms = Math.max(1, parseFloat(durationSeconds) || 5) * 1000; // fallback 5s
+    const ms = Math.max(1, parseFloat(durationSeconds) || 5) * 1000;
     this.mediaTimer = setTimeout(() => this.handleEnd(), ms);
   }
 
   onVideoLoad = (data, item) => {
-    // prefer admin/playlist Duration if present and >0, else use natural duration from file
     const adminDuration = item?.Duration;
     const natural = data?.duration || 0;
     const useSec = (adminDuration && adminDuration > 0) ? adminDuration : (natural > 0 ? natural : 5);
-    // If the video is longer than admin duration and we want to cut, set timer to advance
-    // If adminDuration null and repeat is true for single video, let onEnd handle advancing.
+    
+    // ✅ ADD: Clear media load errors on successful load
+    healthMonitor.clearError('media_load');
+    
     if (useSec > 0) {
-      // clear any previous timer and set one
       if (this.videoTimer) clearTimeout(this.videoTimer);
       this.videoTimer = setTimeout(() => this.handleEnd(), useSec * 1000);
     }
   }
 
-  // renderView: for images use onLoad -> startMediaTimer(item.Duration||5)
   renderView = () => {
     let items =
       (this.state.videos &&
         this.state.videos.sort((a, b) => a.Priority - b.Priority)) ||
       [];
+
+    // ✅ ADD: Handle no media case
+    if (!items || items.length === 0) {
+      healthMonitor.addError('no_media', 'No media to display');
+      return (
+        <View style={{flex:1,backgroundColor:'#000',justifyContent:'center',alignItems:'center'}}>
+          <Text style={{color:'#fff',fontSize:18}}>No media to display</Text>
+        </View>
+      );
+    }
 
     // Handle single media item
     if (items && items.length === 1) {
@@ -153,7 +184,16 @@ class Main extends Component {
               resizeMode={'stretch'}
               style={{width: this.state.width, height: this.state.height}}
               source={{ uri: item.MediaPath, priority: FastImage.priority.high }}
-              onLoad={() => this.startMediaTimer(item.Duration || item.MediaDuration || 5)}
+              onLoad={() => {
+                // ✅ ADD: Clear errors on successful load
+                healthMonitor.clearError('media_load');
+                this.startMediaTimer(item.Duration || item.MediaDuration || 5);
+              }}
+              onError={(error) => {
+                // ✅ ADD: Report image error
+                console.log('[Main] Image error:', error);
+                healthMonitor.reportMediaError(item.MediaName, 'Failed to load image');
+              }}
             />
           </View>
         );
@@ -166,10 +206,19 @@ class Main extends Component {
               resizeMode={'stretch'}
               repeat={true}
               onEnd={() => {
-                // if admin duration exists we already advance by timer; otherwise onEnd should advance.
                 if (!item.Duration) this.handleEnd();
               }}
               onLoad={(data) => this.onVideoLoad(data, item)}
+              // ✅ ADD: Track playback progress
+              onProgress={(progress) => {
+                healthMonitor.updatePlaybackPosition(progress.currentTime);
+              }}
+              // ✅ ADD: Report video errors
+              onError={(error) => {
+                console.log('[Main] Video error:', error);
+                healthMonitor.reportMediaError(item.MediaName, JSON.stringify(error));
+                this.handleEnd();
+              }}
               style={{width: this.state.width, height: this.state.height}}
             />
           </View>
@@ -187,7 +236,17 @@ class Main extends Component {
             <FastImage
               resizeMode={'stretch'}
               source={{ uri: item.MediaPath, priority: FastImage.priority.high }}
-              onLoad={() => this.startMediaTimer(item.Duration || item.MediaDuration || 5)}
+              onLoad={() => {
+                // ✅ ADD: Clear errors
+                healthMonitor.clearError('media_load');
+                this.startMediaTimer(item.Duration || item.MediaDuration || 5);
+              }}
+              onError={(error) => {
+                // ✅ ADD: Report error
+                console.log('[Main] Image error:', error);
+                healthMonitor.reportMediaError(item.MediaName, 'Failed to load image');
+                this.handleEnd();
+              }}
               style={{width: this.state.width, height: this.state.height}}
             />
           </View>
@@ -203,6 +262,16 @@ class Main extends Component {
                 if (!item.Duration) this.handleEnd();
               }}
               onLoad={(data) => this.onVideoLoad(data, item)}
+              // ✅ ADD: Track progress
+              onProgress={(progress) => {
+                healthMonitor.updatePlaybackPosition(progress.currentTime);
+              }}
+              // ✅ ADD: Report errors
+              onError={(error) => {
+                console.log('[Main] Video error:', error);
+                healthMonitor.reportMediaError(item.MediaName, JSON.stringify(error));
+                this.handleEnd();
+              }}
               style={{width: this.state.width, height: this.state.height}}
             />
           </View>
@@ -218,27 +287,46 @@ class Main extends Component {
     const prevStr = JSON.stringify(prevList);
     const currStr = JSON.stringify(currList);
 
-    // Only update playback state when list actually changed
     if (prevStr !== currStr) {
       console.log('[Main] MediaList changed — new order:');
       (currList || []).sort((a,b) => (a.Priority||0)-(b.Priority||0)).forEach((m, i) => {
         console.log(`${i+1}. Priority ${m.Priority} — ${m.MediaName} (${m.MediaType}) — Duration:${m.Duration}`);
       });
 
-      // clear any running timers
+      // ✅ ADD: Update health monitor with playlist info
+      const playlistName = this.props.order?.DefaultPlaylistName || 'Default';
+      const scheduleRef = this.props.order?.ScheduleRef || null;
+      const playlistType = scheduleRef ? 'Scheduled' : 'Default';
+
+      healthMonitor.updatePlaylist(
+        playlistName,
+        playlistType,
+        scheduleRef,
+        currList.length
+      );
+
+      // ✅ ADD: Update heartbeat
+      updateHeartbeatData({
+        currentPlaylist: playlistName,
+        playlistType: playlistType,
+        scheduleRef: scheduleRef,
+        totalMedia: currList.length,
+        mediaIndex: 0,
+        currentMedia: currList[0]?.MediaName || null,
+      });
+
       this.clearTimers();
 
       this.setState({
         loading: false,
-        videos: currList.slice(), // clone
+        videos: currList.slice(),
         currentVideo: 0,
+      }, () => {
+        // ✅ ADD: Update health monitor with first media
+        if (currList.length > 0) {
+          healthMonitor.updateMedia(currList[0].MediaName, 0);
+        }
       });
-
-      // apply orientation if provided (optional)
-      const OrientationVal = this.props.order.Orientation;
-      if (OrientationVal !== undefined) {
-        // call your orientation helpers here if needed
-      }
     }
   }
 
@@ -249,85 +337,30 @@ class Main extends Component {
     if (!videos || videos.length === 0) return;
 
     if (videos.length === 1) {
+      // ✅ ADD: Single media restart - update health monitor
+      healthMonitor.updateMedia(videos[0].MediaName, 0);
       this.setState({ currentVideo: 0 });
       return;
     }
 
-    if (currentVideo >= videos.length - 1) {
-      this.setState({ currentVideo: 0 });
-    } else {
-      this.setState({ currentVideo: currentVideo + 1 });
-    }
+    const nextIndex = currentVideo >= videos.length - 1 ? 0 : currentVideo + 1;
+    const nextItem = videos[nextIndex];
+
+    // ✅ ADD: Update health monitor with new media
+    healthMonitor.updateMedia(nextItem?.MediaName, nextIndex);
+
+    // ✅ ADD: Update heartbeat
+    updateHeartbeatData({
+      mediaIndex: nextIndex,
+      currentMedia: nextItem?.MediaName || null,
+    });
+
+    this.setState({ currentVideo: nextIndex });
   };
 
   render() {
     return (
       <>
-        {/* Uncomment if you want to show update modal */}
-        {/* <View>
-          <Modal
-            backdropOpacity={0}
-            isVisible={this.state.modalVisible}
-            onBackdropPress={() => {
-              this.setState({modalVisible: false});
-            }}
-            style={{
-              backgroundColor: 'white',
-              height: '50%',
-              width: '50%',
-              alignSelf: 'center',
-            }}>
-            <View style={{height: '100%', width: '100%', marginTop: 10}}>
-              <Image
-                source={logo}
-                style={{height: 100, width: 100, alignSelf: 'center'}}
-              />
-              <Text
-                style={{
-                  textAlign: 'center',
-                  marginTop: 15,
-                  fontWeight: 'bold',
-                  fontSize: 18,
-                }}>
-                New Version Available
-              </Text>
-              <Text style={{textAlign: 'center', marginTop: 15, fontSize: 16}}>
-                Please update to get latest features and best experience
-              </Text>
-              <TouchableOpacity
-                onPress={this.updateApp}
-                style={{
-                  backgroundColor: '#FFA500',
-                  height: '20%',
-                  width: '100%',
-                  position: 'absolute',
-                  top: '80%',
-                  justifyContent: 'center',
-                }}>
-                <Text
-                  style={{
-                    color: 'white',
-                    textAlign: 'center',
-                    fontWeight: 'bold',
-                    fontSize: 15,
-                  }}>
-                  UPDATE NOW
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => this.setState({modalVisible: false})}
-                style={{
-                  position: 'absolute',
-                  right: 0,
-                  top: 5,
-                  paddingRight: 15,
-                }}>
-                <Text style={{fontSize: 20}}>X</Text>
-              </TouchableOpacity>
-            </View>
-          </Modal>
-        </View> */}
-
         <View
           style={{
             flex: 1,

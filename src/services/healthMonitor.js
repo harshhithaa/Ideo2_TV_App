@@ -19,12 +19,14 @@ class HealthMonitor {
       errors: [],
       isProgressing: true,
       healthStatus: 'healthy', // healthy/warning/error
+      isCachedPlaylist: false, // ✅ NEW: Track if using cached content
+      cacheAge: null, // ✅ NEW: Cache age in days
     };
 
     this.watchdogInterval = null;
     this.lastPositionCheck = Date.now();
     this.frozenFrameCount = 0;
-    this.maxFrozenFrames = 3; // Consider frozen after 3 checks with no progress
+    this.maxFrozenFrames = 3;
   }
 
   /**
@@ -33,7 +35,6 @@ class HealthMonitor {
   start() {
     console.log('[HealthMonitor] Starting watchdog');
     
-    // Check every 5 seconds if playback is progressing
     this.watchdogInterval = setInterval(() => {
       this.checkPlaybackProgression();
       this.checkScreenState();
@@ -53,20 +54,30 @@ class HealthMonitor {
 
   /**
    * Update playlist info (call when playlist loads)
+   * ✅ ENHANCED: Now accepts fromCache parameter
    */
-  updatePlaylist(playlistName, playlistType, scheduleRef, totalMedia) {
-    console.log('[HealthMonitor] Playlist updated:', playlistName);
+  updatePlaylist(playlistName, playlistType, scheduleRef, totalMedia, fromCache = false, cacheAge = null) {
+    console.log('[HealthMonitor] Playlist updated:', playlistName, 
+                fromCache ? `(cached, ${cacheAge} days old)` : '(live)');
     
     this.state.currentPlaylist = playlistName || 'Default';
     this.state.playlistType = playlistType || 'Default';
     this.state.scheduleRef = scheduleRef;
     this.state.totalMedia = totalMedia || 0;
+    this.state.isCachedPlaylist = fromCache; // ✅ NEW
+    this.state.cacheAge = cacheAge; // ✅ NEW
     
-    // Reset progression tracking
     this.state.isProgressing = true;
     this.frozenFrameCount = 0;
     
     this.clearError('playlist_load');
+    
+    // ✅ If using cache, add a warning (not error)
+    if (fromCache) {
+      this.addWarning('cache_fallback', 
+        `Using cached playlist${cacheAge !== null ? ` (${cacheAge} days old)` : ''}`
+      );
+    }
   }
 
   /**
@@ -82,7 +93,6 @@ class HealthMonitor {
     this.state.lastPlaybackPosition = 0;
     this.lastPositionCheck = Date.now();
     
-    // Reset frozen detection
     this.frozenFrameCount = 0;
     this.state.isProgressing = true;
     this.state.screenState = 'active';
@@ -105,14 +115,11 @@ class HealthMonitor {
     const now = Date.now();
     const timeSinceLastCheck = now - this.lastPositionCheck;
     
-    // Skip check if too soon
     if (timeSinceLastCheck < 4000) return;
     
     const currentPos = this.state.playbackPosition;
     const lastPos = this.state.lastPlaybackPosition;
     
-    // For video playback, position should advance
-    // For images, we track media changes instead
     if (currentPos === lastPos && currentPos > 0) {
       this.frozenFrameCount++;
       console.log('[HealthMonitor] Playback may be frozen:', this.frozenFrameCount);
@@ -124,7 +131,6 @@ class HealthMonitor {
         this.addError('playback_frozen', 'Playback appears to be stuck');
       }
     } else {
-      // Playback is progressing
       if (this.frozenFrameCount > 0) {
         console.log('[HealthMonitor] Playback resumed');
       }
@@ -138,15 +144,11 @@ class HealthMonitor {
   }
 
   /**
-   * Check screen state (can be expanded with native modules)
+   * Check screen state
    */
   checkScreenState() {
-    // Basic check - can be enhanced with native screen capture
-    // For now, we rely on error callbacks from media components
-    
-    // If we haven't changed media in a very long time, something may be wrong
     const timeSinceMediaChange = Date.now() - new Date(this.state.lastMediaChange).getTime();
-    const maxMediaDuration = 300000; // 5 minutes max for any single media
+    const maxMediaDuration = 300000;
     
     if (timeSinceMediaChange > maxMediaDuration && this.state.totalMedia > 1) {
       console.log('[HealthMonitor] Media stuck on same item too long');
@@ -165,13 +167,34 @@ class HealthMonitor {
       this.state.errors.push({
         type: errorType,
         message: errorMessage,
+        severity: 'error',
         timestamp: new Date().toISOString(),
       });
       
-      // Update health status
       if (errorType.includes('network') || errorType.includes('load')) {
         this.state.healthStatus = 'error';
       } else {
+        this.state.healthStatus = 'warning';
+      }
+    }
+  }
+
+  /**
+   * ✅ NEW: Add warning (less severe than error)
+   */
+  addWarning(warningType, warningMessage) {
+    const existingWarning = this.state.errors.find(e => e.type === warningType);
+    if (!existingWarning) {
+      console.log('[HealthMonitor] Warning added:', warningType, warningMessage);
+      this.state.errors.push({
+        type: warningType,
+        message: warningMessage,
+        severity: 'warning',
+        timestamp: new Date().toISOString(),
+      });
+      
+      // Warnings don't change health status to error
+      if (this.state.healthStatus === 'healthy') {
         this.state.healthStatus = 'warning';
       }
     }
@@ -187,20 +210,33 @@ class HealthMonitor {
       this.state.errors.splice(index, 1);
     }
     
-    // Update health status
     if (this.state.errors.length === 0) {
       this.state.healthStatus = 'healthy';
+      this.state.isCachedPlaylist = false;
+      this.state.cacheAge = null;
     }
   }
 
   /**
-   * Report cache fallback
+   * Report cache fallback - ✅ UPDATED to preserve playlist context
    */
-  reportCacheFallback() {
+  reportCacheFallback(cacheAge = null, playlistName = null, playlistType = 'Default') {
     console.log('[HealthMonitor] Cache fallback detected');
-    this.state.playlistType = 'Default';
-    this.state.currentPlaylist = 'Default (Cached)';
-    this.addError('cache_fallback', 'Using cached default content');
+    
+    // ✅ Preserve the actual playlist type (Default or Scheduled)
+    this.state.playlistType = playlistType;
+    
+    // ✅ Show the actual playlist name with "(Cached)" suffix
+    this.state.currentPlaylist = playlistName 
+      ? `${playlistName} (Cached)` 
+      : 'Unknown (Cached)';
+    
+     this.state.isCachedPlaylist = true;
+     this.state.cacheAge = cacheAge;
+     
+     const ageStr = cacheAge !== null ? ` (${cacheAge} days old)` : '';
+     const typeStr = playlistType === 'Scheduled' ? 'scheduled playlist' : 'default content';
+     this.addWarning('cache_fallback', `Using cached ${typeStr}${ageStr}`);
   }
 
   /**
@@ -220,11 +256,11 @@ class HealthMonitor {
   }
 
   /**
-   * Report screen error (black/white screen)
+   * Report screen error
    */
   reportScreenError(errorType) {
     console.log('[HealthMonitor] Screen error:', errorType);
-    this.state.screenState = errorType; // 'black', 'white', 'frozen'
+    this.state.screenState = errorType;
     this.addError('screen_error', `Screen state: ${errorType}`);
   }
 
@@ -239,7 +275,7 @@ class HealthMonitor {
   }
 
   /**
-   * Reset health state (call on app restart or major state change)
+   * Reset health state
    */
   reset() {
     console.log('[HealthMonitor] Resetting state');
@@ -247,11 +283,12 @@ class HealthMonitor {
     this.state.healthStatus = 'healthy';
     this.state.isProgressing = true;
     this.state.screenState = 'active';
+    this.state.isCachedPlaylist = false;
+    this.state.cacheAge = null;
     this.frozenFrameCount = 0;
   }
 }
 
-// Singleton instance
 const healthMonitor = new HealthMonitor();
 
 export default healthMonitor;

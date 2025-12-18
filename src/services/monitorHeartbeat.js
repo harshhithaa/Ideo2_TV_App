@@ -9,8 +9,8 @@ let heartbeatInterval = null;
 let currentHeartbeatData = {
   monitorRef: null,
   monitorName: null,
-  currentPlaylist: 'Default',
-  playlistType: 'Default',
+  currentPlaylist: null,
+  playlistType: null,
   scheduleRef: null,
   currentMedia: null,
   mediaIndex: 0,
@@ -182,7 +182,8 @@ export const stopMonitorHeartbeat = () => {
 export const updateHeartbeatData = (updates) => {
   Object.assign(currentHeartbeatData, updates);
   console.log('[Heartbeat] Data updated:', currentHeartbeatData);
-  
+  // Merge into health monitor too (so healthState stays authoritative)
+  try { healthMonitor.patchHeartbeatData && healthMonitor.patchHeartbeatData(currentHeartbeatData); } catch (e) {}
   // Send immediate update via socket
   sendStatusUpdate();
 };

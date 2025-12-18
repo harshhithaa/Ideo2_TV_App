@@ -309,7 +309,7 @@ class Main extends Component {
         this.props.order?.DefaultPlaylistName ||
         this.props.order?.PlaylistName ||
         this.props.order?.Name ||
-        'Default';
+        'Unknown Playlist';
       const scheduleRef = this.props.order?.ScheduleRef || null;
       const playlistType = this.props.order?.PlaylistType || (scheduleRef ? 'Scheduled' : 'Default');
 

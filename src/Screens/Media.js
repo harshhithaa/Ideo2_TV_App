@@ -159,15 +159,16 @@ class Media extends Component {
       const changeType = scheduleChanged ? 'Schedule change' : 'Media update';
       console.log(`[Media] ${changeType} detected, count: ${currentMediaList.length}`);
       
+      // Use backend-provided fields (prefer CurrentPlaylistName)
       const playlistName =
         this.props.order?.CurrentPlaylistName ||
         this.props.order?.DefaultPlaylistName ||
         this.props.order?.PlaylistName ||
         this.props.order?.Name ||
-        'Default';
+        'Unknown Playlist';
       const scheduleRef = this.props.order?.ScheduleRef || null;
-      const playlistType = scheduleRef ? 'Scheduled' : 'Default';
-
+      const playlistType = this.props.order?.PlaylistType || (scheduleRef ? 'Scheduled' : 'Default');
+ 
       healthMonitor.updatePlaylist(
         playlistName,
         playlistType,

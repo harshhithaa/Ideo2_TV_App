@@ -105,8 +105,6 @@ export default (state = initialState, action) => {
   switch (action.type) {
     case FETCH_ITEMS: {
       const details = action.payload || {};
-
-      // Get media list from various possible locations
       const apiMedia = Array.isArray(details.MediaList) ? details.MediaList : [];
       const candidates = [
         apiMedia,
@@ -114,7 +112,6 @@ export default (state = initialState, action) => {
         Array.isArray(details.DefaultMediaList) ? details.DefaultMediaList : [],
         Array.isArray(details.Media) ? details.Media : [],
       ];
-
       let chosenMedia = [];
       for (const c of candidates) {
         if (c && c.length) {
@@ -122,27 +119,20 @@ export default (state = initialState, action) => {
           break;
         }
       }
-
-      // fallback to previous state's MediaList if still empty
       if (!chosenMedia.length && state.order && Array.isArray(state.order.MediaList)) {
         chosenMedia = state.order.MediaList;
       }
-
-      // ✅ Ensure each media item has a valid Duration
       chosenMedia = chosenMedia.map(item => ({
         ...item,
         Duration: item.Duration !== null && item.Duration !== undefined 
           ? item.Duration 
-          : (item.MediaType === 'video' ? null : 10) // Default 10s for images, null for videos
+          : (item.MediaType === 'video' ? null : 10)
       }));
-
       const Orientation = details.Orientation !== undefined ? details.Orientation : state.order.Orientation;
-
-      // ✅ NEW: Extract playlist and schedule info for heartbeat (use backend fields)
-      const CurrentPlaylistName = details.CurrentPlaylistName || details.DefaultPlaylistName || details.PlaylistName || 'Default';
-      const PlaylistType = details.PlaylistType || (details.ScheduleRef ? 'Scheduled' : 'Default');
-      const ScheduleRef = details.ScheduleRef || details.scheduleRef || null;
-
+      const CurrentPlaylistName = details.CurrentPlaylistName || details.PlaylistName || details.DefaultPlaylistName || state.order.CurrentPlaylistName || 'Unknown Playlist';
+      const PlaylistType = details.PlaylistType || state.order.PlaylistType || (details.ScheduleRef ? 'Scheduled' : 'Default');
+      const ScheduleRef = details.ScheduleRef || state.order.ScheduleRef || null;
+ 
       return {
         ...state,
         items: details,
@@ -150,9 +140,9 @@ export default (state = initialState, action) => {
           ...state.order,
           MediaList: chosenMedia,
           Orientation,
-          CurrentPlaylistName,  // ✅ NEW
-          PlaylistType,         // ✅ NEW
-          ScheduleRef,          // ✅ NEW
+          CurrentPlaylistName,
+          PlaylistType,
+          ScheduleRef,
         },
       };
     }

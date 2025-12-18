@@ -152,7 +152,11 @@ class Media extends Component {
       const changeType = scheduleChanged ? 'Schedule change' : 'Media update';
       console.log(`[Media] ${changeType} detected, count: ${currentMediaList.length}`);
 
-      const playlistName = this.props.order?.DefaultPlaylistName || 'Default';
+      const playlistName =
+        this.props.order?.DefaultPlaylistName ||
+        this.props.order?.PlaylistName ||
+        this.props.order?.Name ||
+        'Default';
       const scheduleRef = this.props.order?.ScheduleRef || null;
       const playlistType = scheduleRef ? 'Scheduled' : 'Default';
 
@@ -373,7 +377,11 @@ class Media extends Component {
       const changeType = scheduleChanged ? 'Schedule change' : 'Media update';
       console.log(`[Media] ${changeType} detected, count: ${currentMediaList.length}`);
 
-      const playlistName = this.props.order?.DefaultPlaylistName || 'Default';
+      const playlistName =
+        this.props.order?.DefaultPlaylistName ||
+        this.props.order?.PlaylistName ||
+        this.props.order?.Name ||
+        'Default';
       const scheduleRef = this.props.order?.ScheduleRef || null;
       const playlistType = scheduleRef ? 'Scheduled' : 'Default';
 
@@ -719,3 +727,5 @@ const mapDispatchToProps = dispatch => ({
 });
 
 export default connect(mapStateToProps, mapDispatchToProps)(Media);
+
+// --- IGNORE ---

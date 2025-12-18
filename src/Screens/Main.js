@@ -294,7 +294,11 @@ class Main extends Component {
       });
 
       // ✅ ADD: Update health monitor with playlist info
-      const playlistName = this.props.order?.DefaultPlaylistName || 'Default';
+      const playlistName =
+        this.props.order?.DefaultPlaylistName ||
+        this.props.order?.PlaylistName ||
+        this.props.order?.Name ||
+        'Default';
       const scheduleRef = this.props.order?.ScheduleRef || null;
       const playlistType = scheduleRef ? 'Scheduled' : 'Default';
 

@@ -138,8 +138,9 @@ export default (state = initialState, action) => {
 
       const Orientation = details.Orientation !== undefined ? details.Orientation : state.order.Orientation;
 
-      // ✅ NEW: Extract playlist and schedule info for heartbeat
-      const DefaultPlaylistName = details.DefaultPlaylistName || details.PlaylistName || 'Default';
+      // ✅ NEW: Extract playlist and schedule info for heartbeat (use backend fields)
+      const CurrentPlaylistName = details.CurrentPlaylistName || details.DefaultPlaylistName || details.PlaylistName || 'Default';
+      const PlaylistType = details.PlaylistType || (details.ScheduleRef ? 'Scheduled' : 'Default');
       const ScheduleRef = details.ScheduleRef || details.scheduleRef || null;
 
       return {
@@ -149,7 +150,8 @@ export default (state = initialState, action) => {
           ...state.order,
           MediaList: chosenMedia,
           Orientation,
-          DefaultPlaylistName,  // ✅ NEW
+          CurrentPlaylistName,  // ✅ NEW
+          PlaylistType,         // ✅ NEW
           ScheduleRef,          // ✅ NEW
         },
       };

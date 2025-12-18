@@ -11,6 +11,8 @@ import {
   TouchableOpacity,
   Linking,
   ActivityIndicator,
+  Image,
+  Animated,
 } from 'react-native';
 import {
   responsiveWidth,
@@ -47,7 +49,13 @@ class Main extends Component {
       errorMessage: '',
       paused: false,
       currentVideo: 0,
+      bufferIndex: 0,
+      preloadedMedia: {}, // NEW
     };
+
+    // Animated values for crossfade
+    this.currentOpacity = new Animated.Value(1);
+    this.nextOpacity = new Animated.Value(0);
 
     this.mediaTimer = null;
     this.videoTimer = null;
@@ -158,13 +166,69 @@ class Main extends Component {
     }
   }
 
-  renderView = () => {
-    let items =
-      (this.state.videos &&
-        this.state.videos.sort((a, b) => a.Priority - b.Priority)) ||
-      [];
+  preloadNextMedia = () => {
+    const videos = this.state.videos || [];
+    const currentVideo = this.state.currentVideo || 0;
+    if (!videos.length) return;
+    const nextIndex = (currentVideo + 1) % videos.length;
+    const nextItem = videos[nextIndex];
+    if (!nextItem) return;
 
-    // ✅ ADD: Handle no media case
+    if (this.state.preloadedMedia[nextItem.MediaRef]) return;
+
+    if (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif') {
+      console.log('[Main] Preloading image:', nextItem.MediaName);
+      Image.prefetch(nextItem.MediaPath)
+        .then(() => {
+          console.log('[Main] ✓ Preloaded image:', nextItem.MediaName);
+          this.setState(prev => ({
+            preloadedMedia: { ...prev.preloadedMedia, [nextItem.MediaRef]: true }
+          }));
+        })
+        .catch(err => {
+          console.log('[Main] ✗ Preload failed:', nextItem.MediaName, err);
+        });
+    } else if (nextItem.MediaType === 'video') {
+      console.log('[Main] Marking video pending:', nextItem.MediaName);
+      this.setState(prev => ({
+        preloadedMedia: { ...prev.preloadedMedia, [nextItem.MediaRef]: 'video_pending' }
+      }));
+    }
+  };
+
+  // CROSSFADE transition similar to Media.js
+  handleEnd = () => {
+    this.clearTimers();
+    const { videos, currentVideo } = this.state;
+    if (!videos || videos.length === 0) return;
+
+    if (videos.length === 1) {
+      healthMonitor.updateMedia(videos[0].MediaName, 0);
+      this.setState({ currentVideo: 0 });
+      return;
+    }
+
+    const nextIndex = currentVideo >= videos.length - 1 ? 0 : currentVideo + 1;
+    const nextItem = videos[nextIndex];
+    if (!nextItem) return;
+
+    healthMonitor.updateMedia(nextItem?.MediaName, nextIndex);
+    updateHeartbeatData({ mediaIndex: nextIndex, currentMedia: nextItem?.MediaName || null });
+
+    Animated.parallel([
+      Animated.timing(this.currentOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+      Animated.timing(this.nextOpacity, { toValue: 1, duration: 300, useNativeDriver: true })
+    ]).start(() => {
+      this.setState(prev => ({ currentVideo: nextIndex, bufferIndex: prev.bufferIndex ^ 1 }), () => {
+        this.currentOpacity.setValue(1);
+        this.nextOpacity.setValue(0);
+        setTimeout(() => this.preloadNextMedia(), 100);
+      });
+    });
+  };
+
+  renderView = () => {
+    const items = (this.state.videos && this.state.videos.sort((a,b)=>a.Priority-b.Priority)) || [];
     if (!items || items.length === 0) {
       healthMonitor.addError('no_media', 'No media to display');
       return (
@@ -174,110 +238,56 @@ class Main extends Component {
       );
     }
 
-    // Handle single media item
-    if (items && items.length === 1) {
-      const item = items[0];
-      if (item.MediaType === 'image' || item.MediaType === 'gif') {
-        return (
-          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
-            <FastImage
-              resizeMode={'stretch'}
-              style={{width: this.state.width, height: this.state.height}}
-              source={{ uri: item.MediaPath, priority: FastImage.priority.high }}
-              onLoad={() => {
-                // ✅ ADD: Clear errors on successful load
-                healthMonitor.clearError('media_load');
-                this.startMediaTimer(item.Duration || item.MediaDuration || 5);
-              }}
-              onError={(error) => {
-                // ✅ ADD: Report image error
-                console.log('[Main] Image error:', error);
-                healthMonitor.reportMediaError(item.MediaName, 'Failed to load image');
-              }}
-            />
-          </View>
-        );
-      } else if (item.MediaType === 'video') {
-        return (
-          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
-            <StatusBar translucent backgroundColor="transparent" />
-            <Video
-              source={{ uri: item?.MediaPath ? convertToProxyURL(item?.MediaPath) : null }}
-              resizeMode={'stretch'}
-              repeat={true}
-              onEnd={() => {
-                if (!item.Duration) this.handleEnd();
-              }}
-              onLoad={(data) => this.onVideoLoad(data, item)}
-              // ✅ ADD: Track playback progress
-              onProgress={(progress) => {
-                healthMonitor.updatePlaybackPosition(progress.currentTime);
-              }}
-              // ✅ ADD: Report video errors
-              onError={(error) => {
-                console.log('[Main] Video error:', error);
-                healthMonitor.reportMediaError(item.MediaName, JSON.stringify(error));
-                this.handleEnd();
-              }}
-              style={{width: this.state.width, height: this.state.height}}
-            />
-          </View>
-        );
-      }
-    }
-    // Handle playlist
-    else {
-      const item = items[this.state.currentVideo];
-      if (!item) return null;
+    const current = items[this.state.currentVideo] || items[0];
+    const next = items[(this.state.currentVideo + 1) % items.length];
 
-      if (item.MediaType === 'image' || item.MediaType === 'gif') {
-        return (
-          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
+    // Render stacked two buffers
+    return (
+      <View style={{flex:1}}>
+        {/* Next (underneath) */}
+        <Animated.View style={{
+          position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:1,
+          opacity: this.nextOpacity
+        }}>
+          {next && (next.MediaType === 'image' || next.MediaType === 'gif') ? (
+            <FastImage source={{ uri: next.MediaPath }} style={{ width: this.state.width, height: this.state.height }} />
+          ) : next && next.MediaType === 'video' ? (
+            <Video source={{ uri: next?.MediaPath ? convertToProxyURL(next?.MediaPath) : null }} style={{ width: this.state.width, height: this.state.height }} />
+          ) : null}
+        </Animated.View>
+
+        {/* Current (on top) */}
+        <Animated.View style={{
+          position:'absolute', top:0, left:0, right:0, bottom:0, zIndex:2,
+          opacity: this.currentOpacity
+        }}>
+          {current && (current.MediaType === 'image' || current.MediaType === 'gif') ? (
             <FastImage
-              resizeMode={'stretch'}
-              source={{ uri: item.MediaPath, priority: FastImage.priority.high }}
+              source={{ uri: current.MediaPath }}
+              style={{ width: this.state.width, height: this.state.height }}
               onLoad={() => {
-                // ✅ ADD: Clear errors
                 healthMonitor.clearError('media_load');
-                this.startMediaTimer(item.Duration || item.MediaDuration || 5);
+                this.startMediaTimer(current.Duration || current.MediaDuration || 5);
+                // mark preloaded
+                this.setState(prev => ({ preloadedMedia: {...prev.preloadedMedia, [current.MediaRef]: true} }));
               }}
               onError={(error) => {
-                // ✅ ADD: Report error
-                console.log('[Main] Image error:', error);
-                healthMonitor.reportMediaError(item.MediaName, 'Failed to load image');
-                this.handleEnd();
+                healthMonitor.reportMediaError(current.MediaName, 'Failed to load image');
               }}
-              style={{width: this.state.width, height: this.state.height}}
             />
-          </View>
-        );
-      } else if (item.MediaType === 'video') {
-        return (
-          <View style={{flex:1,backgroundColor:'#fff',justifyContent:'center',alignItems:'center'}}>
-            <StatusBar translucent backgroundColor="transparent" />
+          ) : current && current.MediaType === 'video' ? (
             <Video
-              source={{ uri: item?.MediaPath ? convertToProxyURL(item?.MediaPath) : null }}
+              source={{ uri: current?.MediaPath ? convertToProxyURL(current?.MediaPath) : null }}
               resizeMode={'stretch'}
-              onEnd={() => {
-                if (!item.Duration) this.handleEnd();
-              }}
-              onLoad={(data) => this.onVideoLoad(data, item)}
-              // ✅ ADD: Track progress
-              onProgress={(progress) => {
-                healthMonitor.updatePlaybackPosition(progress.currentTime);
-              }}
-              // ✅ ADD: Report errors
-              onError={(error) => {
-                console.log('[Main] Video error:', error);
-                healthMonitor.reportMediaError(item.MediaName, JSON.stringify(error));
-                this.handleEnd();
-              }}
-              style={{width: this.state.width, height: this.state.height}}
+              onLoad={(data) => this.onVideoLoad(data, current)}
+              onProgress={(progress) => { healthMonitor.updatePlaybackPosition(progress.currentTime); }}
+              onError={(err) => { healthMonitor.reportMediaError(current.MediaName, JSON.stringify(err)); this.handleEnd(); }}
+              style={{ width: this.state.width, height: this.state.height }}
             />
-          </View>
-        );
-      }
-    }
+          ) : null}
+        </Animated.View>
+      </View>
+    );
   };
 
   componentDidUpdate(prevProps) {
@@ -293,14 +303,15 @@ class Main extends Component {
         console.log(`${i+1}. Priority ${m.Priority} — ${m.MediaName} (${m.MediaType}) — Duration:${m.Duration}`);
       });
 
-      // ✅ ADD: Update health monitor with playlist info
+      // Use backend-provided playlist name fields
       const playlistName =
+        this.props.order?.CurrentPlaylistName ||
         this.props.order?.DefaultPlaylistName ||
         this.props.order?.PlaylistName ||
         this.props.order?.Name ||
         'Default';
       const scheduleRef = this.props.order?.ScheduleRef || null;
-      const playlistType = scheduleRef ? 'Scheduled' : 'Default';
+      const playlistType = this.props.order?.PlaylistType || (scheduleRef ? 'Scheduled' : 'Default');
 
       healthMonitor.updatePlaylist(
         playlistName,
@@ -309,7 +320,6 @@ class Main extends Component {
         currList.length
       );
 
-      // ✅ ADD: Update heartbeat
       updateHeartbeatData({
         currentPlaylist: playlistName,
         playlistType: playlistType,
@@ -326,41 +336,14 @@ class Main extends Component {
         videos: currList.slice(),
         currentVideo: 0,
       }, () => {
-        // ✅ ADD: Update health monitor with first media
         if (currList.length > 0) {
           healthMonitor.updateMedia(currList[0].MediaName, 0);
+          // Preload next immediately
+          setTimeout(() => this.preloadNextMedia(), 100);
         }
       });
     }
   }
-
-  handleEnd = () => {
-    this.clearTimers();
-
-    const { videos, currentVideo } = this.state;
-    if (!videos || videos.length === 0) return;
-
-    if (videos.length === 1) {
-      // ✅ ADD: Single media restart - update health monitor
-      healthMonitor.updateMedia(videos[0].MediaName, 0);
-      this.setState({ currentVideo: 0 });
-      return;
-    }
-
-    const nextIndex = currentVideo >= videos.length - 1 ? 0 : currentVideo + 1;
-    const nextItem = videos[nextIndex];
-
-    // ✅ ADD: Update health monitor with new media
-    healthMonitor.updateMedia(nextItem?.MediaName, nextIndex);
-
-    // ✅ ADD: Update heartbeat
-    updateHeartbeatData({
-      mediaIndex: nextIndex,
-      currentMedia: nextItem?.MediaName || null,
-    });
-
-    this.setState({ currentVideo: nextIndex });
-  };
 
   render() {
     return (

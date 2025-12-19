@@ -53,10 +53,14 @@ class Media extends Component {
       preloadedMedia: {}, // ✅ ensure exists
       // NEW: track which buffer is visible (0 = current on top, 1 = next on top)
       bufferIndex: 0,
+      // NEW: show initialization UI until first media actually ready
+      isInitializing: true,
+      firstMediaReady: false,
     };
 
     // NEW: Animated values for crossfade (current = top, next = bottom)
-    this.currentOpacity = new Animated.Value(1);
+    // start invisible — only animate to visible after video onLoad
+    this.currentOpacity = new Animated.Value(0);
     this.nextOpacity = new Animated.Value(0);
 
     this.mediaTimer = null;
@@ -75,6 +79,12 @@ class Media extends Component {
 
     //Start health monitoring
     healthMonitor.start();
+
+    // If playlist already present on mount, start warming first media
+    if (this.props.order?.MediaList && this.props.order.MediaList.length > 0) {
+      // don't block UI thread too long but ensure first media is prepared before showing
+      this.initializeFirstMedia(this.props.order.MediaList);
+    }
 
     // Set orientation based on initial data
     this.updateOrientation(this.props.order?.Orientation);
@@ -188,68 +198,96 @@ class Media extends Component {
       // ✅ Clear timers and preload cache immediately
       this.clearTimers();
 
-      this.setState(
-        {
-          loading: false,
-          videos: currentMediaList,
-          currentVideo: 0,
-          preloadedMedia: {}, // ✅ Reset preload cache for new playlist
-        },
-        () => {
-          if (currentMediaList.length > 0) {
-            const firstItem = currentMediaList[0];
-            
-            console.log(`[Media] Starting new playlist: ${playlistName}`);
-            console.log(`[Media] First media: ${firstItem.MediaName}`);
-            
-            healthMonitor.updateMedia(firstItem.MediaName, 0);
-            
-            // ✅ CRITICAL: Preload first media immediately for schedule changes
-            if (scheduleChanged) {
-              console.log('[Media] Schedule changed - preloading first media');
-              this.preloadFirstMedia(firstItem);
-            }
-            
-            // ✅ Then preload next media
-            setTimeout(() => this.preloadNextMedia(), 200);
-            
-            if (firstItem.MediaType === 'image' || firstItem.MediaType === 'gif') {
-              this.startMediaTimer(firstItem.Duration);
-            }
+      // set videos immediately but keep "initializing" UI until first media truly ready
+      this.setState({
+        loading: true,
+        videos: currentMediaList,
+        currentVideo: 0,
+        preloadedMedia: {}, // reset preload cache for new playlist
+        isInitializing: true,
+        firstMediaReady: false,
+      }, async () => {
+        if (currentMediaList.length > 0) {
+          const firstItem = currentMediaList[0];
+          console.log(`[Media] Starting new playlist: ${playlistName}`);
+          console.log(`[Media] First media: ${firstItem.MediaName}`);
+          healthMonitor.updateMedia(firstItem.MediaName, 0);
+
+          try { this.currentOpacity.setValue(0); this.nextOpacity.setValue(0); } catch (e) {}
+
+          // preload and WAIT for first media to be ready (reduces flash/skip)
+          try {
+            await this.preloadFirstMedia(firstItem);
+          } catch (e) {
+            console.log('[Media] preloadFirstMedia error:', e);
           }
+
+          // mark ready and show UI (animate in)
+          this.setState({ isInitializing: false, firstMediaReady: true, loading: false }, () => {
+            Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+            // still warm next media
+            setTimeout(() => this.preloadNextMedia(), 200);
+          });
+        } else {
+          // nothing to play
+          this.setState({ isInitializing: false, loading: false });
         }
-      );
+      });
+    }
+  }
+
+  /**
+   * Initialize first media if playlist exists on mount
+   * Accepts mediaList (array) to be robust
+   */
+  initializeFirstMedia = async (mediaList) => {
+    try {
+      const list = mediaList || this.props.order?.MediaList || [];
+      if (list.length === 0) return;
+      const first = list[0];
+      // mark state and wait for preload
+      this.setState({ videos: list, currentVideo: 0, loading: true, isInitializing: true });
+      await this.preloadFirstMedia(first);
+      this.setState({ isInitializing: false, firstMediaReady: true, loading: false }, () => {
+        try { Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start(); } catch (e) {}
+        setTimeout(() => this.preloadNextMedia(), 200);
+      });
+    } catch (e) {
+      console.log('[Media] initializeFirstMedia error:', e);
+      this.setState({ isInitializing: false, loading: false });
     }
   }
 
   // ✅ NEW: Preload the first media when schedule changes mid-playback
-  preloadFirstMedia = (item) => {
+  preloadFirstMedia = async (item) => {
     if (!item) return;
-    
     console.log(`[Media] Preloading first media: ${item.MediaName} (${item.MediaType})`);
-    
     if (item.MediaType === 'image' || item.MediaType === 'gif') {
-      Image.prefetch(item.MediaPath)
-        .then(() => {
-          console.log(`[Media] ✓ First media preloaded: ${item.MediaName}`);
-          this.setState(prevState => ({
-            preloadedMedia: {
-              ...prevState.preloadedMedia,
-              [item.MediaRef]: true,
-            },
-          }));
-        })
-        .catch(err => {
-          console.log(`[Media] ✗ First media preload failed:`, err);
-        });
-    } else if (item.MediaType === 'video') {
-      // Mark video as pending (will cache on load)
-      this.setState(prevState => ({
-        preloadedMedia: {
-          ...prevState.preloadedMedia,
-          [item.MediaRef]: 'video_pending',
-        },
-      }));
+      try {
+        await Image.prefetch(item.MediaPath);
+        this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true } }));
+        console.log(`[Media] ✓ First image preloaded: ${item.MediaName}`);
+      } catch (e) {
+        console.log('[Media] Image prefetch failed:', e);
+        throw e;
+      }
+      return;
+    }
+
+    // video: warm proxy cache and wait a short moment to allow buffer
+    this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: 'video_pending' } }));
+    try {
+      const proxyUrl = convertToProxyURL(item.MediaPath);
+      // HEAD is usually faster and triggers proxy to fetch/cache
+      await fetch(proxyUrl, { method: 'HEAD' });
+      // small stability delay so native layer has time to acquire initial bytes
+      await new Promise(res => setTimeout(res, 500));
+      this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true } }));
+      console.log('[Media] Proxy warm complete for first video:', item.MediaName);
+    } catch (err) {
+      console.log('[Media] Proxy warm failed for first video:', err);
+      // still resolve so UI can attempt playback (avoid infinite block)
+      this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: false } }));
     }
   };
 
@@ -308,14 +346,28 @@ class Media extends Component {
           console.log(`[Media] ✗ Preload failed: ${nextItem.MediaName}`, err);
         });
     } else if (nextItem.MediaType === 'video') {
-      // mark as pending; actual readiness will be set in Video onLoad
-      console.log(`[Media] Marking next video pending: ${nextItem.MediaName}`);
+      // mark as pending; also warm proxy cache proactively
+      console.log(`[Media] Marking next video pending & warming proxy: ${nextItem.MediaName}`);
       this.setState(prev => ({
         preloadedMedia: {
           ...prev.preloadedMedia,
           [nextItem.MediaRef]: 'video_pending'
         }
-      }));
+      }), () => {
+        try {
+          const proxyUrl = convertToProxyURL(nextItem.MediaPath);
+          // Fire-and-forget fetch to warm the local proxy cache
+          fetch(proxyUrl, { method: 'GET' })
+            .then(() => {
+              console.log('[Media] Proxy warmed for next video:', nextItem.MediaName);
+            })
+            .catch(err => {
+              console.log('[Media] Proxy warm failed for next video:', err);
+            });
+        } catch (e) {
+          console.log('[Media] Proxy warm exception:', e);
+        }
+      });
     }
   };
 
@@ -374,6 +426,19 @@ class Media extends Component {
           resizeMode={'stretch'}
           repeat={false}
           paused={false}
+          // Use TextureView on Android so the video respects React view stacking/opacity
+          useTextureView={true}
+          // remove poster prop entirely to prevent native poster/thumbnail flash
+          // onReadyForDisplay provides a reliable native-ready hook
+          onReadyForDisplay={(e) => {
+            if (isCurrent) {
+              // mark ready and animate in (first or subsequent loads)
+              try {
+                this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true } }));
+                Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+              } catch (e) {}
+            }
+          }}
           onLoad={(data) => {
             console.log(`[Media] Video onLoad (${role}):`, item?.MediaName);
             // mark video ready
@@ -383,8 +448,9 @@ class Media extends Component {
                 [item.MediaRef]: true
               }
             }));
-            // If this is the current buffer, start duration timer
+            // Animate current buffer visible only when current is ready
             if (isCurrent) {
+              Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
               // determine duration as existing logic
               const adminDuration = item?.Duration;
               const naturalDuration = data?.duration || 0;
@@ -395,6 +461,11 @@ class Media extends Component {
               this.videoTimer = setTimeout(() => {
                 this.handleEnd();
               }, useSeconds * 1000);
+            } else {
+              // mark next ready but don't show yet
+              try {
+                // keep nextOpacity at 0; nothing to do
+              } catch (e) {}
             }
           }}
           onEnd={() => {

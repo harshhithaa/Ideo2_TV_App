@@ -56,10 +56,14 @@ class Media extends Component {
       // NEW: show initialization UI until first media actually ready
       isInitializing: true,
       firstMediaReady: false,
+      // NEW: map mediaRef -> effective source URL (proxy or original)
+      sourceMap: {},
+      // NEW: map mediaRef -> playing (controls paused prop directly)
+      playing: {},
     };
 
     // NEW: Animated values for crossfade (current = top, next = bottom)
-    // start invisible — only animate to visible after video onLoad
+    // start invisible — only animate to visible after video onLoad/onReadyForDisplay
     this.currentOpacity = new Animated.Value(0);
     this.nextOpacity = new Animated.Value(0);
 
@@ -206,6 +210,7 @@ class Media extends Component {
         preloadedMedia: {}, // reset preload cache for new playlist
         isInitializing: true,
         firstMediaReady: false,
+        playing: {}, // reset playing map
       }, async () => {
         if (currentMediaList.length > 0) {
           const firstItem = currentMediaList[0];
@@ -222,9 +227,8 @@ class Media extends Component {
             console.log('[Media] preloadFirstMedia error:', e);
           }
 
-          // mark ready and show UI (animate in)
+          // mark ready and show UI (do NOT animate here for videos — onReadyForDisplay will reveal)
           this.setState({ isInitializing: false, firstMediaReady: true, loading: false }, () => {
-            Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
             // still warm next media
             setTimeout(() => this.preloadNextMedia(), 200);
           });
@@ -246,10 +250,10 @@ class Media extends Component {
       if (list.length === 0) return;
       const first = list[0];
       // mark state and wait for preload
-      this.setState({ videos: list, currentVideo: 0, loading: true, isInitializing: true });
+      this.setState({ videos: list, currentVideo: 0, loading: true, isInitializing: true, playing: {} });
       await this.preloadFirstMedia(first);
       this.setState({ isInitializing: false, firstMediaReady: true, loading: false }, () => {
-        try { Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start(); } catch (e) {}
+        try { this.currentOpacity.setValue(0); } catch (e) {}
         setTimeout(() => this.preloadNextMedia(), 200);
       });
     } catch (e) {
@@ -397,15 +401,18 @@ class Media extends Component {
             source={{ uri: item.MediaPath }}
             onLoad={() => {
               console.log(`[Media] ${role} image loaded: ${item.MediaName}`);
-              // mark as preloaded ready
               this.setState(prev => ({
                 preloadedMedia: {
                   ...prev.preloadedMedia,
                   [item.MediaRef]: true
-                }
+                },
+                sourceMap: { ...prev.sourceMap, [item.MediaRef]: item.MediaPath }
               }));
-              // start timer for current only
-              if (isCurrent) this.startMediaTimer(item.Duration);
+              // reveal immediately for current images
+              if (isCurrent) {
+                try { this.currentOpacity.setValue(1); } catch (e) {}
+                this.startMediaTimer(item.Duration);
+              }
             }}
             onError={error => {
               console.log('[Media] Image load error:', error.nativeEvent?.error || error);
@@ -418,39 +425,50 @@ class Media extends Component {
       );
     }
 
-    // Video: keep it mounted but invisible until onLoad sets ready and we animate opacity
+    // Video: choose proxy source if available, else original
+    const uri = this.state.sourceMap[item.MediaRef] || (() => { try { return convertToProxyURL(item.MediaPath); } catch(e){ return item.MediaPath; } })();
+    // Control paused via playing map (do NOT depend on preloadedMedia)
+    const isPlaying = !!this.state.playing[item.MediaRef];
+    const paused = !isPlaying; // removed dependency on preloadedMedia
+
     return (
       <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
         <Video
-          source={{ uri: item?.MediaPath ? convertToProxyURL(item?.MediaPath) : null }}
+          source={{ uri }}
           resizeMode={'stretch'}
           repeat={false}
-          paused={false}
-          // Use TextureView on Android so the video respects React view stacking/opacity
+          paused={paused}
           useTextureView={true}
-          // remove poster prop entirely to prevent native poster/thumbnail flash
-          // onReadyForDisplay provides a reliable native-ready hook
+          // Prevent react-native-video from showing a poster/thumbnail before playback
+          poster={''}
+          usePoster={false}
+          // ensure background doesn't show a default black poster frame on some devices
+          hideShutterView={true}
+          style={{ width, height, opacity: isPlaying ? 1 : 0, backgroundColor: '#000' }}
           onReadyForDisplay={(e) => {
+            console.log(`[Media] onReadyForDisplay (${role}):`, item?.MediaName);
+            // mark ready and reveal immediately for current role
             if (isCurrent) {
-              // mark ready and animate in (first or subsequent loads)
-              try {
-                this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true } }));
-                Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
-              } catch (e) {}
+              this.setState(prev => ({
+                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+                sourceMap: { ...prev.sourceMap, [item.MediaRef]: uri },
+                playing: { ...prev.playing, [item.MediaRef]: true }
+              }), () => {
+                // Synchronously reveal (no timed animation here) and unpause by setting playing=true
+                try { this.currentOpacity.setValue(1); } catch (e) {}
+              });
+            } else {
+              // For next buffer, mark it's available but keep it paused/invisible
+              this.setState(prev => ({
+                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+                sourceMap: { ...prev.sourceMap, [item.MediaRef]: uri }
+              }));
             }
           }}
           onLoad={(data) => {
             console.log(`[Media] Video onLoad (${role}):`, item?.MediaName);
-            // mark video ready
-            this.setState(prev => ({
-              preloadedMedia: {
-                ...prev.preloadedMedia,
-                [item.MediaRef]: true
-              }
-            }));
-            // Animate current buffer visible only when current is ready
+            // only set duration timer here; do NOT animate opacity from onLoad to avoid race
             if (isCurrent) {
-              Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
               // determine duration as existing logic
               const adminDuration = item?.Duration;
               const naturalDuration = data?.duration || 0;
@@ -461,12 +479,21 @@ class Media extends Component {
               this.videoTimer = setTimeout(() => {
                 this.handleEnd();
               }, useSeconds * 1000);
-            } else {
-              // mark next ready but don't show yet
-              try {
-                // keep nextOpacity at 0; nothing to do
-              } catch (e) {}
             }
+
+            // Fallback: if onReadyForDisplay didn't fire, unpause & reveal current video onLoad
+            if (isCurrent && !this.state.playing[item.MediaRef]) {
+              this.setState(prev => ({
+                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+                sourceMap: { ...prev.sourceMap, [item.MediaRef]: uri },
+                playing: { ...prev.playing, [item.MediaRef]: true }
+              }), () => {
+                try { this.currentOpacity.setValue(1); } catch (e) {}
+              });
+            }
+
+            try { healthMonitor.clearError && healthMonitor.clearError('media_load'); } catch (e) {}
+            setTimeout(() => this.preloadNextMedia && this.preloadNextMedia(), 300);
           }}
           onEnd={() => {
             console.log('[Media] Video ended naturally');
@@ -480,7 +507,6 @@ class Media extends Component {
           onProgress={(progress) => {
             healthMonitor.updatePlaybackPosition(progress.currentTime);
           }}
-          style={{ width, height, opacity: 1 }}
         />
       </Animated.View>
     );
@@ -548,14 +574,23 @@ class Media extends Component {
       Animated.timing(this.nextOpacity, { toValue: 1, duration: 300, useNativeDriver: true })
     ]).start(() => {
       // Swap buffer: set currentVideo to nextIndex and reset opacities for next cycle
-      this.setState(prev => ({
-        currentVideo: nextIndex,
-        bufferIndex: prev.bufferIndex ^ 1
-      }), () => {
-        // Reset opacities for next cycle (current on top)
+      this.setState(prev => {
+        const prevIndex = prev.currentVideo;
+        const newCurrent = prev.videos[nextIndex];
+        const prevCurrent = prev.videos[prevIndex];
+        // Atomically update currentVideo, bufferIndex and playing map to avoid race
+        const newPlaying = { ...prev.playing };
+        if (newCurrent) newPlaying[newCurrent.MediaRef] = true;
+        if (prevCurrent) newPlaying[prevCurrent.MediaRef] = false;
+        return {
+          currentVideo: nextIndex,
+          bufferIndex: prev.bufferIndex ^ 1,
+          playing: newPlaying
+        };
+      }, () => {
+        // Reset opacities for next cycle (current on top) AFTER playing is set
         this.currentOpacity.setValue(1);
         this.nextOpacity.setValue(0);
-
         // Preload following media
         setTimeout(() => this.preloadNextMedia(), 100);
       });

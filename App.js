@@ -61,4 +61,6 @@ const styles = StyleSheet.create({
   },
 });
 
+console.log('BUILD_TEST_2025');
+
 export default App;

@@ -26,7 +26,7 @@ class HealthMonitor {
     this.watchdogInterval = null;
     this.lastPositionCheck = Date.now();
     this.frozenFrameCount = 0;
-    this.maxFrozenFrames = 3;
+    this.maxFrozenFrames = 6; // ✅ 30 seconds instead of 15 seconds
   }
 
   /**
@@ -120,15 +120,25 @@ class HealthMonitor {
     const currentPos = this.state.playbackPosition;
     const lastPos = this.state.lastPlaybackPosition;
     
+    // ✅ ADD THIS: Skip frozen check for images/gifs (position is always 0)
+    if (currentPos === 0 && lastPos === 0) {
+      this.frozenFrameCount = 0;
+      this.state.isProgressing = true;
+      this.lastPositionCheck = now;
+      return;
+    }
+
     if (currentPos === lastPos && currentPos > 0) {
       this.frozenFrameCount++;
       console.log('[HealthMonitor] Playback may be frozen:', this.frozenFrameCount);
       
       if (this.frozenFrameCount >= this.maxFrozenFrames) {
+        // ✅ ONLY REPORT - don't intervene
         this.state.isProgressing = false;
         this.state.screenState = 'frozen';
         this.state.healthStatus = 'warning';
-        this.addError('playback_frozen', 'Playback appears to be stuck');
+        this.addWarning('playback_frozen', 'Playback appears to be stuck'); // Changed to addWarning
+        // ✅ Note: Playback continues, we just report the issue
       }
     } else {
       if (this.frozenFrameCount > 0) {
@@ -142,18 +152,29 @@ class HealthMonitor {
     this.state.lastPlaybackPosition = currentPos;
     this.lastPositionCheck = now;
   }
-
+  
   /**
    * Check screen state
    */
   checkScreenState() {
+    // Only check if playlist has multiple items
+    if (this.state.totalMedia <= 1) {
+      return;
+    }
+
     const timeSinceMediaChange = Date.now() - new Date(this.state.lastMediaChange).getTime();
-    const maxMediaDuration = 300000;
-    
-    if (timeSinceMediaChange > maxMediaDuration && this.state.totalMedia > 1) {
-      console.log('[HealthMonitor] Media stuck on same item too long');
+
+    // Threshold: 180 seconds (3 minutes)
+    // Reason: max media duration ~60s, use 3x safety buffer to avoid false positives
+    const maxMediaDuration = 180000; // 3 minutes in milliseconds
+
+    if (timeSinceMediaChange > maxMediaDuration) {
+      const seconds = Math.floor(timeSinceMediaChange / 1000);
+      console.log(`[HealthMonitor] Media stuck on same item for ${seconds}s`);
       this.state.healthStatus = 'warning';
-      this.addError('media_stuck', 'Same media playing for extended period');
+      this.addWarning('media_stuck', 
+        `Same media playing for ${seconds} seconds (threshold: 180s)`
+      );
     }
   }
 

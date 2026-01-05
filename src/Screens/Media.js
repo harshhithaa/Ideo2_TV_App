@@ -101,10 +101,10 @@ class Media extends Component {
       this.interval = setInterval(() => this.getdta(), 30000);
     }
 
-    // Auto-restart timeout
-    this.timeout = setTimeout(() => {
-      this.props.navigation.replace('Next');
-    }, 1800000);
+    // ✅ REMOVED: Auto-restart not needed for continuous playback
+    // this.timeout = setTimeout(() => {
+    //   this.props.navigation.replace('Next');
+    // }, 1800000);
   };
 
   updateOrientation = orientation => {
@@ -646,11 +646,12 @@ class Media extends Component {
     const {videos, currentVideo, width, height} = this.state;
 
     if (!videos || videos.length === 0) {
-      console.log('[Media] No media available to display');
-      healthMonitor.addError('no_media', 'No media to display');
+      console.log('[Media] No media available, waiting for playlist...');
+      // ✅ CHANGED: Just show loading, don't add error
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.noMediaText}>No media to display</Text>
+          <ActivityIndicator color={'#FFA500'} size="large" />
+          <Text style={styles.loadingText}>Waiting for playlist...</Text>
         </View>
       );
     }

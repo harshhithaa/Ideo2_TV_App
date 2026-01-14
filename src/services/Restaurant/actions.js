@@ -45,10 +45,11 @@ export const fetchItems = callback => async dispatch => {
         AuthToken: token.AuthToken,
       },
       data: { MonitorRef: token.MonitorRef },
-      timeout: 10000,
+      timeout: 15000, // ✅ Increased timeout for better reliability
     });
 
-    console.log('[fetchItems] status:', response.status, 'data:', response.data);
+    console.log('[fetchItems] status:', response.status);
+    console.log('[fetchItems] playlist count:', response.data?.Details?.MediaList?.length || 0);
 
     const items = response.data;
     if (items?.Error) {
@@ -58,7 +59,14 @@ export const fetchItems = callback => async dispatch => {
     }
 
     const details = items.Details || items.details || items || {};
-    console.log('[fetchItems] Details:', details);
+    
+    // ✅ Log duration info for debugging
+    if (details.MediaList && details.MediaList.length > 0) {
+      console.log('[fetchItems] Sample media durations:');
+      details.MediaList.slice(0, 3).forEach(m => {
+        console.log(`  - ${m.MediaName}: Duration=${m.Duration}s, MediaDuration=${m.MediaDuration}s`);
+      });
+    }
 
     dispatch({
       type: FETCH_ITEMS,

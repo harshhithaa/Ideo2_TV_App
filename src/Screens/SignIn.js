@@ -11,6 +11,7 @@ import {
   Image,
   Keyboard,
   ScrollView,
+  TVFocusGuideView, // ✅ NEW: Import for TV focus management
 } from 'react-native';
 import colors from '../Assets/Colors/Colors';
 import { responsiveHeight, responsiveFontSize, responsiveWidth } from 'react-native-responsive-dimensions';
@@ -19,10 +20,12 @@ import { fetchscreenref, updateOrder } from '../services/Restaurant/actions';
 import { connect } from 'react-redux';
 import logo from '../Assets/Logos/ideogram_logo.png';
 import { Alert } from 'react-native';
+import { initializeSocket, startMonitorHeartbeat } from '../services/monitorHeartbeat';
 
 class PhoneAuth extends Component {
   passwordInputRef = createRef();
   screenInputRef = createRef();
+  signInButtonRef = createRef(); // ✅ NEW: Reference for sign-in button
 
   state = {
     password: '',
@@ -42,6 +45,14 @@ class PhoneAuth extends Component {
     // Use keyboard event listeners that provide keyboard height
     this._keyboardDidShowSub = Keyboard.addListener('keyboardDidShow', this._keyboardDidShow);
     this._keyboardDidHideSub = Keyboard.addListener('keyboardDidHide', this._keyboardDidHide);
+    
+    // ✅ NEW: Auto-focus screen name input field when component mounts
+    // Use setTimeout to ensure the component is fully rendered before focusing
+    setTimeout(() => {
+      if (this.screenInputRef.current) {
+        this.screenInputRef.current.focus();
+      }
+    }, 100);
   }
 
   componentWillUnmount() {
@@ -52,8 +63,6 @@ class PhoneAuth extends Component {
       clearTimeout(this.blurTimeout);
       this.blurTimeout = null;
     }
-    
-    // ❌ REMOVE THIS LINE - Don't disconnect socket after login!
   }
 
   _keyboardDidShow = (e) => {
@@ -108,15 +117,21 @@ class PhoneAuth extends Component {
           MonitorUser: this.state.screen,
           Password: this.state.password,
         };
-        this.props.fetchscreenref(payload, (error) => {
+        this.props.fetchscreenref(payload, async (error) => {
           if (!error) {
+            try {
+              console.log('[SignIn] Initializing socket after login');
+              await initializeSocket();
+            } catch (err) {
+              console.log('[SignIn] Socket initialization error:', err);
+            }
             this.props.navigation.replace('Main', { prevpath: 'COD' });
           } else {
-            Alert.alert(`${error.err.ErrorMessage}`);
+            // ✅ Show clear error message for concurrent login
+            const errorMsg = error.err?.ErrorMessage || 'Login failed';
+            Alert.alert('Login Error', errorMsg);
           }
         });
-      } else {
-        // keep existing behavior
       }
     });
   };
@@ -126,16 +141,17 @@ class PhoneAuth extends Component {
   };
 
   render() {
-    // Reduce shift to ~60% of keyboard height so "Screen Name" stays fully visible
+    // ✅ FIXED: Balanced shift - enough to show button, not too much to hide heading
+    // Use 40% of keyboard height to push content up moderately
     const effectiveShift = this.state.keyboardVisible
-      ? (this.state.keyboardHeight || 240) * 0.6
+      ? (this.state.keyboardHeight || 300) * 0.40
       : 0;
     const shiftStyle = { transform: [{ translateY: -effectiveShift }] };
 
     // Two-column split: left branding, right form
     return (
       <SafeAreaView style={styles.container}>
-        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={styles.splitRow}>
             {/* LEFT: Branding column */}
             <View style={styles.leftCol}>
@@ -149,14 +165,20 @@ class PhoneAuth extends Component {
               </View>
             </View>
 
-            {/* RIGHT: Login form */}
-            <View style={[styles.rightCol, shiftStyle]}>
-              <ScrollView contentContainerStyle={styles.formScroll} keyboardShouldPersistTaps="handled">
+            {/* RIGHT: Login form - ✅ FIXED: Remove shiftStyle from container */}
+            <View style={styles.rightCol}>
+              {/* ✅ FIXED: Apply shift to ScrollView content instead */}
+              <ScrollView 
+                contentContainerStyle={[styles.formScroll, shiftStyle]}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
                 <View style={styles.formInner}>
                   {/* Sign In heading - subtitle removed permanently */}
                   <Text style={styles.signInHeading}>Sign In</Text>
 
                   {/* Screen Name (was Email Address) - placeholder as label inside field */}
+                  {/* ✅ FIXED: Add nextFocusDown and nextFocusUp for TV navigation */}
                   <View style={styles.field}>
                     <TextInput
                       ref={this.screenInputRef}
@@ -170,10 +192,14 @@ class PhoneAuth extends Component {
                       onSubmitEditing={() => this.passwordInputRef.current?.focus?.()}
                       onFocus={this.handleInputFocus}
                       onBlur={this.handleInputBlur}
+                      // ✅ NEW: TV remote navigation - Down key moves to password field
+                      nextFocusDown={this.passwordInputRef}
+                      hasTVPreferredFocus={true} // Start focus here
                     />
                   </View>
 
                   {/* Password field with right-side "Show" text button */}
+                  {/* ✅ FIXED: Add nextFocusUp and nextFocusDown for TV navigation */}
                   <View style={[styles.field, { marginTop: 16 }]}>
                     <TextInput
                       ref={this.passwordInputRef}
@@ -187,14 +213,24 @@ class PhoneAuth extends Component {
                       onSubmitEditing={this.signIn}
                       onFocus={this.handleInputFocus}
                       onBlur={this.handleInputBlur}
+                      // ✅ NEW: TV remote navigation - Up key moves to screen name, Down to button
+                      nextFocusUp={this.screenInputRef}
+                      nextFocusDown={this.signInButtonRef}
                     />
                     <TouchableOpacity onPress={this.togglePassword} style={styles.showBtn}>
                       <Text style={styles.showText}>{this.state.passwordHidden ? 'Show' : 'Hide'}</Text>
                     </TouchableOpacity>
                   </View>
 
-                  {/* Primary button - exact yellow requested (#FFA500) and width matches fields */}
-                  <TouchableOpacity style={styles.primaryBtn} onPress={this.signIn} activeOpacity={0.9}>
+                  {/* ✅ FIXED: Add ref and nextFocusUp for TV navigation */}
+                  <TouchableOpacity 
+                    ref={this.signInButtonRef}
+                    style={styles.primaryBtn} 
+                    onPress={this.signIn} 
+                    activeOpacity={0.9}
+                    // ✅ NEW: Up key moves back to password field
+                    nextFocusUp={this.passwordInputRef}
+                  >
                     <Text style={styles.primaryBtnText}>Sign in now</Text>
                   </TouchableOpacity>
                 </View>
@@ -223,7 +259,12 @@ const styles = StyleSheet.create({
 
   // Right column (form)
   rightCol: { flex: 1, backgroundColor: '#ffffff', justifyContent: 'center', paddingHorizontal: responsiveWidth(8) },
-  formScroll: { flexGrow: 1, justifyContent: 'center' },
+  // ✅ FIXED: Add vertical padding for breathing room
+  formScroll: { 
+    flexGrow: 1, 
+    justifyContent: 'center',
+    paddingVertical: 30,
+  },
   formInner: { width: '100%', maxWidth: 520, alignSelf: 'center' },
 
   // FIXED: Sign In heading with reduced bottom margin (was 24, now 12) to keep heading visible

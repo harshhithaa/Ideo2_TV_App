@@ -20,6 +20,7 @@ import {
 } from 'react-native-responsive-dimensions';
 import Video from 'react-native-video';
 import NetInfo from '@react-native-community/netinfo';
+
 import KeepAwake from 'react-native-keep-awake';
 import {connect} from 'react-redux';
 
@@ -32,9 +33,49 @@ import Modal from 'react-native-modal';
 import logo from '../Assets/Logos/ideogram_logo.png';
 import {checkVersion} from 'react-native-check-version';
 
-import convertToProxyURL from 'react-native-video-cache';
-import { updateHeartbeatData } from '../services/monitorHeartbeat';
+// ✅ REMOVE: convertToProxyURL (no longer needed)
+// import convertToProxyURL from 'react-native-video-cache';
+// ✅ ADD: Import cache manager
+import cacheManager from '../services/videoCacheManager';
+import { 
+  updateHeartbeatData, 
+  startMonitorHeartbeat,
+  initializeSocket
+} from '../services/monitorHeartbeat';
 import healthMonitor from '../services/healthMonitor';
+import AsyncStorage from '@react-native-community/async-storage';
+
+// ✅ REMOVE: shouldUseDirectStreaming helper (replaced by cache manager)
+
+// ✅ Keep existing buffer and bitrate helpers for streaming fallback
+const getAdaptiveBitRate = (connectionType) => {
+  switch(connectionType) {
+    case 'wifi': return 8000000;
+    case 'cellular': 
+    case '4g': return 3000000;
+    case '3g': return 1200000;
+    case '2g': return 500000;
+    default: return 2000000;
+  }
+};
+
+const getBufferConfig = (connectionType) => {
+  if (connectionType === 'wifi' || connectionType === 'ethernet') {
+    return {
+      minBufferMs: 15000,
+      maxBufferMs: 50000,
+      bufferForPlaybackMs: 5000,
+      bufferForPlaybackAfterRebufferMs: 10000
+    };
+  } else {
+    return {
+      minBufferMs: 10000,
+      maxBufferMs: 30000,
+      bufferForPlaybackMs: 3000,
+      bufferForPlaybackAfterRebufferMs: 5000
+    };
+  }
+};
 
 class Media extends Component {
   constructor() {
@@ -50,26 +91,29 @@ class Media extends Component {
       errorMessage: '',
       paused: false,
       currentVideo: 0,
-      preloadedMedia: {}, // ✅ ensure exists
-      // NEW: track which buffer is visible (0 = current on top, 1 = next on top)
+      preloadedMedia: {},
       bufferIndex: 0,
-      // NEW: show initialization UI until first media actually ready
       isInitializing: true,
       firstMediaReady: false,
-      // NEW: map mediaRef -> effective source URL (proxy or original)
-      sourceMap: {},
-      // NEW: map mediaRef -> playing (controls paused prop directly)
+      sourceMap: {}, // ✅ Now stores local cache paths
       playing: {},
+      connectionType: 'wifi',
+      isConnected: true,
+      retryAttempts: {},
+      // ✅ NEW: Track download progress
+      downloadProgress: {},
+      cachingStatus: 'idle',
+      playlistLoopCount: 0,
     };
 
-    // NEW: Animated values for crossfade (current = top, next = bottom)
-    // start invisible — only animate to visible after video onLoad/onReadyForDisplay
     this.currentOpacity = new Animated.Value(0);
     this.nextOpacity = new Animated.Value(0);
-
     this.mediaTimer = null;
     this.videoTimer = null;
     this.dimensionSubscription = null;
+    this.netInfoUnsubscribe = null;
+    this.preloadTriggered = false;
+    this.downloadInProgress = new Set(); // ✅ Track ongoing downloads
 
     this.dimensionSubscription = Dimensions.addEventListener('change', e => {
       this.setState({width: e.window.width, height: e.window.height});
@@ -81,30 +125,80 @@ class Media extends Component {
     SystemNavigationBar.navigationHide();
     KeepAwake.activate();
 
-    //Start health monitoring
     healthMonitor.start();
 
-    // If playlist already present on mount, start warming first media
-    if (this.props.order?.MediaList && this.props.order.MediaList.length > 0) {
-      // don't block UI thread too long but ensure first media is prepared before showing
-      this.initializeFirstMedia(this.props.order.MediaList);
+    this.netInfoUnsubscribe = NetInfo.addEventListener(state => {
+      console.log('[Media] Network state:', state.type, 'connected:', state.isConnected);
+      this.setState({
+        connectionType: state.type,
+        isConnected: state.isConnected
+      });
+    });
+
+    // ✅ Initialize cache manager
+    await cacheManager.initialize();
+
+    try {
+      console.log('[Media] Initializing socket connection on mount');
+      await initializeSocket();
+      console.log('[Media] Socket initialized successfully');
+    } catch (error) {
+      console.log('[Media] Socket initialization error:', error);
     }
 
-    // Set orientation based on initial data
     this.updateOrientation(this.props.order?.Orientation);
 
-    // Fetch data immediately
+    if (this.props.order?.MediaList && this.props.order.MediaList.length > 0) {
+      await this.initializeFirstMedia(this.props.order.MediaList);
+      this.startHeartbeatIfReady();
+    }
+
     this.getdta();
 
-    // Poll every 30 seconds
     if (!this.interval) {
       this.interval = setInterval(() => this.getdta(), 30000);
     }
 
-    // ✅ REMOVED: Auto-restart not needed for continuous playback
-    // this.timeout = setTimeout(() => {
-    //   this.props.navigation.replace('Next');
-    // }, 1800000);
+    // ✅ NEW: Schedule periodic cache cleanup (every 24 hours)
+    this.cleanupInterval = setInterval(() => {
+      cacheManager.cleanupOldCache();
+    }, 24 * 60 * 60 * 1000);
+  };
+
+  startHeartbeatIfReady = async () => {
+    try {
+      const userData = await AsyncStorage.getItem('user');
+      if (!userData) return;
+
+      const user = JSON.parse(userData);
+      const mediaList = this.props.order?.MediaList || [];
+      
+      if (mediaList.length === 0) {
+        console.log('[Media] Waiting for playlist data before starting heartbeat');
+        return;
+      }
+
+      const playlistName = this.props.order?.CurrentPlaylistName || 
+                         this.props.order?.DefaultPlaylistName || 
+                         'Default';
+      
+      console.log('[Media] Starting heartbeat with playlist:', playlistName);
+      
+      startMonitorHeartbeat({
+        monitorRef: user.MonitorRef,
+        monitorName: user.MonitorName,
+        currentPlaylist: playlistName,
+        playlistType: this.props.order?.PlaylistType || 'Default',
+        scheduleRef: this.props.order?.ScheduleRef || null,
+        totalMedia: mediaList.length,
+        mediaIndex: this.state.currentVideo || 0,
+        currentMedia: mediaList[this.state.currentVideo || 0]?.MediaName || null,
+      }, 5000);
+      
+      console.log('[Media] Heartbeat started successfully');
+    } catch (error) {
+      console.log('[Media] Error starting heartbeat:', error);
+    }
   };
 
   updateOrientation = orientation => {
@@ -132,48 +226,39 @@ class Media extends Component {
         this.props.fetchItems(err => {
           if (err) {
             console.log('[Media] fetchItems error:', err);
-            //Report network error to health monitor
             healthMonitor.reportNetworkError(err);
           } else {
-            //Clear network errors on success
             healthMonitor.clearError('network_error');
           }
         });
       } else {
         console.log('[Media] No internet connection');
-        //Report network error
         healthMonitor.reportNetworkError('No internet connection');
       }
     });
   };
 
-  // ✅ ENHANCED: componentDidUpdate with better change detection
   componentDidUpdate(prevProps) {
     const prevMediaList = prevProps.order?.MediaList || [];
     const currentMediaList = this.props.order?.MediaList || [];
 
-    // Update orientation if changed
     if (prevProps.order?.Orientation !== this.props.order?.Orientation) {
       this.updateOrientation(this.props.order?.Orientation);
     }
 
-    // ✅ Enhanced change detection - check schedule changes too
     const prevScheduleRef = prevProps.order?.ScheduleRef;
     const currentScheduleRef = this.props.order?.ScheduleRef;
     const scheduleChanged = prevScheduleRef !== currentScheduleRef;
 
-    // Check if MediaList actually changed
     const mediaChanged =
       prevMediaList.length !== currentMediaList.length ||
       JSON.stringify(prevMediaList.map(m => ({ref: m.MediaRef, dur: m.Duration, pri: m.Priority}))) !==
       JSON.stringify(currentMediaList.map(m => ({ref: m.MediaRef, dur: m.Duration, pri: m.Priority})));
 
-    // ✅ React to both media changes AND schedule changes
     if (mediaChanged || scheduleChanged) {
       const changeType = scheduleChanged ? 'Schedule change' : 'Media update';
       console.log(`[Media] ${changeType} detected, count: ${currentMediaList.length}`);
       
-      // Use backend-provided fields (prefer CurrentPlaylistName)
       const playlistName =
         this.props.order?.CurrentPlaylistName ||
         this.props.order?.DefaultPlaylistName ||
@@ -182,7 +267,7 @@ class Media extends Component {
         'Unknown Playlist';
       const scheduleRef = this.props.order?.ScheduleRef || null;
       const playlistType = this.props.order?.PlaylistType || (scheduleRef ? 'Scheduled' : 'Default');
- 
+
       healthMonitor.updatePlaylist(
         playlistName,
         playlistType,
@@ -199,18 +284,21 @@ class Media extends Component {
         currentMedia: currentMediaList[0]?.MediaName || null,
       });
 
-      // ✅ Clear timers and preload cache immediately
+      // ✅ REMOVED: clearTier2Cache() (doesn't exist in new cache manager)
+      // Cache cleanup happens automatically via LRU when space is needed
+
       this.clearTimers();
 
-      // set videos immediately but keep "initializing" UI until first media truly ready
       this.setState({
         loading: true,
         videos: currentMediaList,
         currentVideo: 0,
-        preloadedMedia: {}, // reset preload cache for new playlist
+        preloadedMedia: {},
         isInitializing: true,
         firstMediaReady: false,
-        playing: {}, // reset playing map
+        playing: {},
+        sourceMap: {}, // ✅ Clear source map
+        playlistLoopCount: 0, // ✅ Reset loop counter
       }, async () => {
         if (currentMediaList.length > 0) {
           const firstItem = currentMediaList[0];
@@ -220,36 +308,28 @@ class Media extends Component {
 
           try { this.currentOpacity.setValue(0); this.nextOpacity.setValue(0); } catch (e) {}
 
-          // preload and WAIT for first media to be ready (reduces flash/skip)
           try {
             await this.preloadFirstMedia(firstItem);
           } catch (e) {
             console.log('[Media] preloadFirstMedia error:', e);
           }
 
-          // mark ready and show UI (do NOT animate here for videos — onReadyForDisplay will reveal)
           this.setState({ isInitializing: false, firstMediaReady: true, loading: false }, () => {
-            // still warm next media
             setTimeout(() => this.preloadNextMedia(), 200);
+            this.startHeartbeatIfReady();
           });
         } else {
-          // nothing to play
           this.setState({ isInitializing: false, loading: false });
         }
       });
     }
   }
 
-  /**
-   * Initialize first media if playlist exists on mount
-   * Accepts mediaList (array) to be robust
-   */
   initializeFirstMedia = async (mediaList) => {
     try {
       const list = mediaList || this.props.order?.MediaList || [];
       if (list.length === 0) return;
       const first = list[0];
-      // mark state and wait for preload
       this.setState({ videos: list, currentVideo: 0, loading: true, isInitializing: true, playing: {} });
       await this.preloadFirstMedia(first);
       this.setState({ isInitializing: false, firstMediaReady: true, loading: false }, () => {
@@ -262,14 +342,18 @@ class Media extends Component {
     }
   }
 
-  // ✅ NEW: Preload the first media when schedule changes mid-playback
+  // ✅ ENHANCED: preloadFirstMedia using cache manager
   preloadFirstMedia = async (item) => {
     if (!item) return;
     console.log(`[Media] Preloading first media: ${item.MediaName} (${item.MediaType})`);
+    
     if (item.MediaType === 'image' || item.MediaType === 'gif') {
       try {
         await Image.prefetch(item.MediaPath);
-        this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true } }));
+        this.setState(prev => ({ 
+          preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+          sourceMap: { ...prev.sourceMap, [item.MediaRef]: item.MediaPath }
+        }));
         console.log(`[Media] ✓ First image preloaded: ${item.MediaName}`);
       } catch (e) {
         console.log('[Media] Image prefetch failed:', e);
@@ -278,20 +362,34 @@ class Media extends Component {
       return;
     }
 
-    // video: warm proxy cache and wait a short moment to allow buffer
-    this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: 'video_pending' } }));
-    try {
-      const proxyUrl = convertToProxyURL(item.MediaPath);
-      // HEAD is usually faster and triggers proxy to fetch/cache
-      await fetch(proxyUrl, { method: 'HEAD' });
-      // small stability delay so native layer has time to acquire initial bytes
-      await new Promise(res => setTimeout(res, 500));
-      this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true } }));
-      console.log('[Media] Proxy warm complete for first video:', item.MediaName);
-    } catch (err) {
-      console.log('[Media] Proxy warm failed for first video:', err);
-      // still resolve so UI can attempt playback (avoid infinite block)
-      this.setState(prev => ({ preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: false } }));
+    // ✅ NEW: Videos - use cache manager
+    if (item.MediaType === 'video') {
+      try {
+        // Check if cached
+        const cachedPath = await cacheManager.getCachedPath(item.MediaRef, item.MediaPath);
+        
+        if (cachedPath) {
+          console.log(`[Media] ✓ First video loaded from cache: ${item.MediaName}`);
+          this.setState(prev => ({ 
+            preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+            sourceMap: { ...prev.sourceMap, [item.MediaRef]: cachedPath }
+          }));
+        } else {
+          // Not cached - will stream directly
+          console.log(`[Media] First video will stream: ${item.MediaName}`);
+          this.setState(prev => ({ 
+            preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+            sourceMap: { ...prev.sourceMap, [item.MediaRef]: item.MediaPath }
+          }));
+        }
+      } catch (e) {
+        console.log('[Media] Cache check failed:', e);
+        // Fallback to streaming
+        this.setState(prev => ({ 
+          preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+          sourceMap: { ...prev.sourceMap, [item.MediaRef]: item.MediaPath }
+        }));
+      }
     }
   };
 
@@ -319,67 +417,107 @@ class Media extends Component {
     }, ms);
   };
 
-  // ✅ ENHANCED: preloadNextMedia ensures next media is cached before display
-  preloadNextMedia = () => {
-    const { videos, currentVideo, preloadedMedia } = this.state;
+  // ✅ ENHANCED: preloadNextMedia with cache manager + background download
+  preloadNextMedia = async () => {
+    const { videos, currentVideo, preloadedMedia, isConnected } = this.state;
     if (!videos || videos.length === 0) return;
 
     const nextIndex = (currentVideo + 1) % videos.length;
     const nextItem = videos[nextIndex];
     if (!nextItem) return;
 
-    // Already preloaded
-    if (preloadedMedia[nextItem.MediaRef]) {
-      // already cached or ready
+    // Images
+    if (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif') {
+      if (!preloadedMedia[nextItem.MediaRef]) {
+        console.log(`[Media] Preloading next image: ${nextItem.MediaName}`);
+        Image.prefetch(nextItem.MediaPath)
+          .then(() => {
+            console.log(`[Media] ✓ Preloaded image: ${nextItem.MediaName}`);
+            this.setState(prev => ({
+              preloadedMedia: { ...prev.preloadedMedia, [nextItem.MediaRef]: true },
+              sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: nextItem.MediaPath }
+            }));
+          })
+          .catch(err => console.log(`[Media] ✗ Preload failed: ${nextItem.MediaName}`, err));
+      }
       return;
     }
 
-    if (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif') {
-      console.log(`[Media] Preloading next image: ${nextItem.MediaName}`);
-      Image.prefetch(nextItem.MediaPath)
-        .then(() => {
-          console.log(`[Media] ✓ Preloaded image: ${nextItem.MediaName}`);
+    // Videos
+    if (nextItem.MediaType === 'video') {
+      if (this.downloadInProgress.has(nextItem.MediaRef)) {
+        return;
+      }
+
+      try {
+        const cachedPath = await cacheManager.getCachedPath(nextItem.MediaRef, nextItem.MediaPath);
+        
+        if (cachedPath) {
+          console.log(`[Media] ✓ Next video already cached: ${nextItem.MediaName}`);
           this.setState(prev => ({
-            preloadedMedia: {
-              ...prev.preloadedMedia,
-              [nextItem.MediaRef]: true
-            }
+            preloadedMedia: { ...prev.preloadedMedia, [nextItem.MediaRef]: true },
+            sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: cachedPath }
           }));
-        })
-        .catch(err => {
-          console.log(`[Media] ✗ Preload failed: ${nextItem.MediaName}`, err);
+          return;
+        }
+
+        if (!isConnected) {
+          console.log(`[Media] ⚠️ Offline - cannot preload: ${nextItem.MediaName}`);
+          this.setState(prev => ({
+            sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: nextItem.MediaPath }
+          }));
+          return;
+        }
+
+        this.downloadInProgress.add(nextItem.MediaRef);
+        console.log(`[Media] Starting background download: ${nextItem.MediaName}`);
+        
+        // Set streaming URL immediately
+        this.setState(prev => ({
+          sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: nextItem.MediaPath }
+        }));
+
+        // Start download (runs in background)
+        cacheManager.downloadVideo(
+          nextItem.MediaRef,
+          nextItem.MediaPath,
+          (progress, loaded, total) => {
+            // ✅ NEW: Log every callback for better visibility
+            const downloadedMB = (loaded / 1024 / 1024).toFixed(1);
+            const totalMB = (total / 1024 / 1024).toFixed(1);
+            console.log(`[Cache] ${Math.floor(progress)}% - ${downloadedMB}MB / ${totalMB}MB`);
+          }
+        ).then(downloadedPath => {
+          if (downloadedPath) {
+            console.log(`[Media] ✓ Video cached: ${nextItem.MediaName}`);
+            
+            // ✅ FIXED: Only update sourceMap, don't force re-render
+            // The cached version will be used on NEXT LOOP
+            this.setState(prev => ({
+              preloadedMedia: { ...prev.preloadedMedia, [nextItem.MediaRef]: true },
+              sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: downloadedPath }
+            }));
+          }
+        }).catch(error => {
+          console.log(`[Media] Download failed, will stream: ${nextItem.MediaName}`);
+        }).finally(() => {
+          this.downloadInProgress.delete(nextItem.MediaRef);
         });
-    } else if (nextItem.MediaType === 'video') {
-      // mark as pending; also warm proxy cache proactively
-      console.log(`[Media] Marking next video pending & warming proxy: ${nextItem.MediaName}`);
-      this.setState(prev => ({
-        preloadedMedia: {
-          ...prev.preloadedMedia,
-          [nextItem.MediaRef]: 'video_pending'
-        }
-      }), () => {
-        try {
-          const proxyUrl = convertToProxyURL(nextItem.MediaPath);
-          // Fire-and-forget fetch to warm the local proxy cache
-          fetch(proxyUrl, { method: 'GET' })
-            .then(() => {
-              console.log('[Media] Proxy warmed for next video:', nextItem.MediaName);
-            })
-            .catch(err => {
-              console.log('[Media] Proxy warm failed for next video:', err);
-            });
-        } catch (e) {
-          console.log('[Media] Proxy warm exception:', e);
-        }
-      });
+
+      } catch (error) {
+        console.log(`[Media] ✗ Preload error:`, error);
+        this.downloadInProgress.delete(nextItem.MediaRef);
+        this.setState(prev => ({
+          sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: nextItem.MediaPath }
+        }));
+      }
     }
   };
 
-  // NEW helper to render a stacked media (either image/gif or video)
+  // ✅ ENHANCED: renderStackedMedia with cache-aware video rendering
   renderStackedMedia = (item, role) => {
-    // role: 'current' or 'next'
     if (!item) return null;
-    const { width, height } = this.state;
+    const { width, height, connectionType, retryAttempts, sourceMap, isConnected } = this.state;
     const isCurrent = role === 'current';
     const animatedStyle = {
       position: 'absolute',
@@ -393,29 +531,26 @@ class Media extends Component {
       opacity: isCurrent ? this.currentOpacity : this.nextOpacity,
     };
 
+    // Images and GIFs
     if (item.MediaType === 'image' || item.MediaType === 'gif') {
+      const imageSource = sourceMap[item.MediaRef] || item.MediaPath;
       return (
         <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
           <Image
             resizeMode={'stretch'}
-            source={{ uri: item.MediaPath }}
+            source={{ uri: imageSource }}
             onLoad={() => {
-              console.log(`[Media] ${role} image loaded: ${item.MediaName}`);
               this.setState(prev => ({
-                preloadedMedia: {
-                  ...prev.preloadedMedia,
-                  [item.MediaRef]: true
-                },
-                sourceMap: { ...prev.sourceMap, [item.MediaRef]: item.MediaPath }
+                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true }
               }));
-              // reveal immediately for current images
               if (isCurrent) {
-                try { this.currentOpacity.setValue(1); } catch (e) {}
-                this.startMediaTimer(item.Duration);
+                Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+                const dur = item.Duration || 10;
+                this.startMediaTimer(dur);
               }
             }}
             onError={error => {
-              console.log('[Media] Image load error:', error.nativeEvent?.error || error);
+              console.log('[Media] ✗ Image load error');
               healthMonitor.reportMediaError(item.MediaName, error.nativeEvent?.error || 'image load error');
               if (isCurrent) this.handleEnd();
             }}
@@ -425,11 +560,16 @@ class Media extends Component {
       );
     }
 
-    // Video: choose proxy source if available, else original
-    const uri = this.state.sourceMap[item.MediaRef] || (() => { try { return convertToProxyURL(item.MediaPath); } catch(e){ return item.MediaPath; } })();
-    // Control paused via playing map (do NOT depend on preloadedMedia)
-    const isPlaying = !!this.state.playing[item.MediaRef];
-    const paused = !isPlaying; // removed dependency on preloadedMedia
+    // ✅ FIXED: Only log once when video is mounted
+    const uri = sourceMap[item.MediaRef] || item.MediaPath;
+    const isCached = uri.startsWith('file://');
+    
+    // ✅ REMOVED: Excessive logging
+    // Only log when video actually loads, not every render
+    
+    const shouldPlay = isCurrent;
+    const adaptiveBitRate = getAdaptiveBitRate(connectionType);
+    const bufferConfig = getBufferConfig(connectionType);
 
     return (
       <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
@@ -437,75 +577,106 @@ class Media extends Component {
           source={{ uri }}
           resizeMode={'stretch'}
           repeat={false}
-          paused={paused}
+          paused={!shouldPlay}
+        
+          {...(!isCached && {
+            bufferConfig,
+            maxBitRate: adaptiveBitRate,
+          })}
+          
+          progressUpdateInterval={1000}
+          playInBackground={false}
+          playWhenInactive={false}
+          disableFocus={true}
+          controls={false}
+          automaticallyWaitsToMinimizeStalling={!isCached}
+          preventsDisplaySleepDuringVideoPlayback={true}
+          reportBandwidth={!isCached}
           useTextureView={true}
-          // Prevent react-native-video from showing a poster/thumbnail before playback
           poster={''}
           usePoster={false}
-          // ensure background doesn't show a default black poster frame on some devices
           hideShutterView={true}
-          style={{ width, height, opacity: isPlaying ? 1 : 0, backgroundColor: '#000' }}
+          
+          style={{ width, height, backgroundColor: '#000' }}
+          
           onReadyForDisplay={(e) => {
-            console.log(`[Media] onReadyForDisplay (${role}):`, item?.MediaName);
-            // mark ready and reveal immediately for current role
-            if (isCurrent) {
-              this.setState(prev => ({
-                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
-                sourceMap: { ...prev.sourceMap, [item.MediaRef]: uri },
-                playing: { ...prev.playing, [item.MediaRef]: true }
-              }), () => {
-                // Synchronously reveal (no timed animation here) and unpause by setting playing=true
-                try { this.currentOpacity.setValue(1); } catch (e) {}
-              });
-            } else {
-              // For next buffer, mark it's available but keep it paused/invisible
-              this.setState(prev => ({
-                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
-                sourceMap: { ...prev.sourceMap, [item.MediaRef]: uri }
-              }));
-            }
+            this.setState(prev => ({
+              preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
+              retryAttempts: { ...prev.retryAttempts, [item.MediaRef]: 0 }
+            }), () => {
+              if (isCurrent) {
+                Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+              }
+            });
           }}
+          
           onLoad={(data) => {
-            console.log(`[Media] Video onLoad (${role}):`, item?.MediaName);
-            // only set duration timer here; do NOT animate opacity from onLoad to avoid race
+            // ✅ FIXED: Only log important info
             if (isCurrent) {
-              // determine duration as existing logic
+              console.log(`[Media] ✓ Video loaded: ${item.MediaName} (${isCached ? 'CACHED' : 'STREAMING'})`);
+              
               const adminDuration = item?.Duration;
               const naturalDuration = data?.duration || 0;
               let useSeconds = 10;
-              if (adminDuration && adminDuration > 0) useSeconds = adminDuration;
-              else if (naturalDuration && naturalDuration > 0) useSeconds = Math.ceil(naturalDuration);
-              this.clearTimers();
-              this.videoTimer = setTimeout(() => {
-                this.handleEnd();
-              }, useSeconds * 1000);
-            }
-
-            // Fallback: if onReadyForDisplay didn't fire, unpause & reveal current video onLoad
-            if (isCurrent && !this.state.playing[item.MediaRef]) {
-              this.setState(prev => ({
-                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
-                sourceMap: { ...prev.sourceMap, [item.MediaRef]: uri },
-                playing: { ...prev.playing, [item.MediaRef]: true }
-              }), () => {
-                try { this.currentOpacity.setValue(1); } catch (e) {}
-              });
+              
+              if (adminDuration && adminDuration > 0) {
+                useSeconds = adminDuration;
+              } else if (naturalDuration && naturalDuration > 0) {
+                useSeconds = Math.ceil(naturalDuration);
+              }
+              
+              this.startMediaTimer(useSeconds);
             }
 
             try { healthMonitor.clearError && healthMonitor.clearError('media_load'); } catch (e) {}
-            setTimeout(() => this.preloadNextMedia && this.preloadNextMedia(), 300);
+            
+            // ✅ FIXED: Only preload once per media
+            if (isCurrent && !this.preloadTriggered) {
+              this.preloadTriggered = true;
+              setTimeout(() => {
+                this.preloadNextMedia();
+              }, 300);
+            }
           }}
+          
           onEnd={() => {
-            console.log('[Media] Video ended naturally');
             this.handleEnd();
           }}
+          
           onError={(error) => {
-            console.log('[Media] Video error:', error);
-            healthMonitor.reportMediaError(item.MediaName, JSON.stringify(error));
-            if (isCurrent) this.handleEnd();
+            console.log('[Media] ✗ Video error:', error);
+            
+            const currentRetries = retryAttempts[item.MediaRef] || 0;
+            const maxRetries = 3;
+
+            if (currentRetries < maxRetries && isConnected) {
+              console.log(`[Media] Retry ${currentRetries + 1}/${maxRetries}`);
+              this.setState(prev => ({
+                retryAttempts: { ...prev.retryAttempts, [item.MediaRef]: currentRetries + 1 }
+              }), () => {
+                setTimeout(() => this.forceUpdate(), 2000);
+              });
+            } else {
+              healthMonitor.reportMediaError(item.MediaName, `Failed after ${maxRetries} retries`);
+              if (isCurrent) {
+                this.setState(prev => ({
+                  retryAttempts: { ...prev.retryAttempts, [item.MediaRef]: 0 }
+                }), () => this.handleEnd());
+              }
+            }
           }}
+          
           onProgress={(progress) => {
-            healthMonitor.updatePlaybackPosition(progress.currentTime);
+            if (isCurrent && progress.currentTime > 0) {
+              healthMonitor.updatePlaybackPosition(progress.currentTime);
+              
+              // ✅ REMOVED: preloadNextMedia call from onProgress
+              // It's already called once in onLoad
+            }
+          }}
+          
+          onBuffer={({ isBuffering }) => {
+            // Silent
           }}
         />
       </Animated.View>
@@ -513,17 +684,35 @@ class Media extends Component {
   };
 
   handleEnd = () => {
+    // ✅ CRITICAL: Prevent duplicate calls
+    if (this._isHandlingEnd) {
+      console.log('[Media] handleEnd already in progress, ignoring duplicate call');
+      return;
+    }
+    
+    this._isHandlingEnd = true;
     console.log('[Media] handleEnd called');
+    
     this.clearTimers();
+    this.preloadTriggered = false;
 
-    const {videos, currentVideo} = this.state;
+    const {videos, currentVideo, playlistLoopCount} = this.state;
 
     if (!videos || videos.length === 0) {
       console.log('[Media] No videos to display');
+      this._isHandlingEnd = false;
       return;
     }
 
-    // Single media - reuse existing logic but still perform a quick crossfade no-op
+    const nextIndex = (currentVideo + 1) % videos.length;
+
+    if (nextIndex === 0) {
+      const newLoopCount = playlistLoopCount + 1;
+      console.log(`[Media] Playlist loop ${newLoopCount} complete`);
+      this.setState({ playlistLoopCount: newLoopCount });
+    }
+
+    // Single media case
     if (videos.length === 1) {
       console.log('[Media] Single media, restarting');
       const item = videos[0];
@@ -532,10 +721,11 @@ class Media extends Component {
       if (item.MediaType === 'image' || item.MediaType === 'gif') {
         this.startMediaTimer(item.Duration);
       }
+      
+      this._isHandlingEnd = false;
       return;
     }
 
-    const nextIndex = (currentVideo + 1) % videos.length;
     const nextItem = videos[nextIndex];
 
     if (!nextItem) {
@@ -548,8 +738,10 @@ class Media extends Component {
           currentMedia: firstItem?.MediaName || null,
         });
         
-        // Preload next
-        setTimeout(() => this.preloadNextMedia(), 100);
+        setTimeout(() => {
+          this.preloadNextMedia();
+          this._isHandlingEnd = false;
+        }, 100);
         
         if (firstItem && (firstItem.MediaType === 'image' || firstItem.MediaType === 'gif')) {
           this.startMediaTimer(firstItem.Duration);
@@ -561,24 +753,21 @@ class Media extends Component {
     console.log(`[Media] Advancing from ${currentVideo} to ${nextIndex}`);
     console.log(`[Media] Next media: ${nextItem.MediaName} (${nextItem.MediaType})`);
 
-    // Update health monitor / heartbeat immediately (preserve behavior)
     healthMonitor.updateMedia(nextItem.MediaName, nextIndex);
     updateHeartbeatData({
       mediaIndex: nextIndex,
       currentMedia: nextItem.MediaName || null,
     });
 
-    // CROSSFADE animation (300ms), then swap buffers by updating currentVideo
+    // Crossfade animation
     Animated.parallel([
       Animated.timing(this.currentOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
       Animated.timing(this.nextOpacity, { toValue: 1, duration: 300, useNativeDriver: true })
     ]).start(() => {
-      // Swap buffer: set currentVideo to nextIndex and reset opacities for next cycle
       this.setState(prev => {
         const prevIndex = prev.currentVideo;
         const newCurrent = prev.videos[nextIndex];
         const prevCurrent = prev.videos[prevIndex];
-        // Atomically update currentVideo, bufferIndex and playing map to avoid race
         const newPlaying = { ...prev.playing };
         if (newCurrent) newPlaying[newCurrent.MediaRef] = true;
         if (prevCurrent) newPlaying[prevCurrent.MediaRef] = false;
@@ -588,11 +777,13 @@ class Media extends Component {
           playing: newPlaying
         };
       }, () => {
-        // Reset opacities for next cycle (current on top) AFTER playing is set
         this.currentOpacity.setValue(1);
         this.nextOpacity.setValue(0);
-        // Preload following media
-        setTimeout(() => this.preloadNextMedia(), 100);
+        
+        setTimeout(() => {
+          this.preloadNextMedia();
+          this._isHandlingEnd = false;
+        }, 100);
       });
     });
   };
@@ -600,7 +791,6 @@ class Media extends Component {
   onVideoLoad = (data, item) => {
     console.log('[Media] Video loaded:', item?.MediaName, 'duration:', data?.duration);
 
-    // clear any existing timers and use admin duration if provided, else natural duration, else fallback
     this.clearTimers();
     const adminDuration = item?.Duration;
     const naturalDuration = data?.duration || 0;
@@ -610,22 +800,24 @@ class Media extends Component {
 
     console.log('[Media] Using duration (s):', useSeconds);
 
-    // ensure we advance after the chosen duration
     this.videoTimer = setTimeout(() => {
       console.log('[Media] Video duration elapsed, advancing');
       this.handleEnd();
     }, useSeconds * 1000);
 
-    // clear any media-load errors and start preloading next
     try { healthMonitor.clearError && healthMonitor.clearError('media_load'); } catch (e) {}
     setTimeout(() => this.preloadNextMedia && this.preloadNextMedia(), 300);
   };
 
   componentWillUnmount() {
-    // Stop health monitoring
     healthMonitor.stop();
     
     this.clearTimers();
+
+    if (this.netInfoUnsubscribe) {
+      this.netInfoUnsubscribe();
+      this.netInfoUnsubscribe = null;
+    }
 
     if (this.dimensionSubscription && typeof this.dimensionSubscription.remove === 'function') {
       this.dimensionSubscription.remove();
@@ -640,14 +832,14 @@ class Media extends Component {
       clearTimeout(this.timeout);
       this.timeout = null;
     }
+
+    // ✅ REMOVED: Manual cleanup interval (cache manager handles this internally)
   }
 
   renderView = () => {
-    const {videos, currentVideo, width, height} = this.state;
+    const {videos, currentVideo, width, height} = this.state; // ✅ REMOVED: cachingStatus, downloadProgress
 
     if (!videos || videos.length === 0) {
-      console.log('[Media] No media available, waiting for playlist...');
-      // ✅ CHANGED: Just show loading, don't add error
       return (
         <View style={styles.centerContainer}>
           <ActivityIndicator color={'#FFA500'} size="large" />
@@ -663,7 +855,8 @@ class Media extends Component {
     const nextIndex = (safeIndex + 1) % videos.length;
     const nextItem = videos[nextIndex];
 
-    // Render both current and next stacked (current above next)
+    // ✅ REMOVED: Caching indicator (no longer shown on screen)
+    
     return (
       <View style={{ flex: 1, width, height }}>
         {this.renderStackedMedia(nextItem, 'next')}
@@ -704,16 +897,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 16,
   },
-  noMediaText: {
-    color: '#fff',
-    fontSize: 18,
-  },
-  errorText: {
-    color: '#f00',
-    fontSize: 18,
-    padding: 20,
-    textAlign: 'center',
-  },
 });
 
 const mapStateToProps = state => ({
@@ -726,4 +909,3 @@ const mapDispatchToProps = dispatch => ({
 
 export default connect(mapStateToProps, mapDispatchToProps)(Media);
 
-// --- IGNORE ---

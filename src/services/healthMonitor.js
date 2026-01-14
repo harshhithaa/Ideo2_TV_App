@@ -19,14 +19,14 @@ class HealthMonitor {
       errors: [],
       isProgressing: true,
       healthStatus: 'healthy', // healthy/warning/error
-      isCachedPlaylist: false, // ✅ NEW: Track if using cached content
-      cacheAge: null, // ✅ NEW: Cache age in days
+      isCachedPlaylist: false, // NEW: Track if using cached content
+      cacheAge: null, // NEW: Cache age in days
     };
 
     this.watchdogInterval = null;
     this.lastPositionCheck = Date.now();
     this.frozenFrameCount = 0;
-    this.maxFrozenFrames = 6; // ✅ 30 seconds instead of 15 seconds
+    this.maxFrozenFrames = 6; // 30 seconds instead of 15 seconds
   }
 
   /**
@@ -54,7 +54,7 @@ class HealthMonitor {
 
   /**
    * Update playlist info (call when playlist loads)
-   * ✅ ENHANCED: Now accepts fromCache parameter
+   * ENHANCED: Now accepts fromCache parameter
    */
   updatePlaylist(playlistName, playlistType, scheduleRef, totalMedia, fromCache = false, cacheAge = null) {
     console.log('[HealthMonitor] Playlist updated:', playlistName, 
@@ -64,15 +64,23 @@ class HealthMonitor {
     this.state.playlistType = playlistType || 'Default';
     this.state.scheduleRef = scheduleRef;
     this.state.totalMedia = totalMedia || 0;
-    this.state.isCachedPlaylist = fromCache; // ✅ NEW
-    this.state.cacheAge = cacheAge; // ✅ NEW
+    this.state.isCachedPlaylist = fromCache;
+    this.state.cacheAge = cacheAge;
     
     this.state.isProgressing = true;
     this.frozenFrameCount = 0;
     
+    // ✅ ADD: Clear ALL errors when playlist loads successfully (not from cache)
+    if (!fromCache) {
+      console.log('[HealthMonitor] Playlist loaded from live server - clearing all errors');
+      this.state.errors = [];
+      this.state.healthStatus = 'healthy';
+      this.state.screenState = 'active';
+    }
+    
     this.clearError('playlist_load');
     
-    // ✅ If using cache, add a warning (not error)
+    // If using cache, add a warning (not error)
     if (fromCache) {
       this.addWarning('cache_fallback', 
         `Using cached playlist${cacheAge !== null ? ` (${cacheAge} days old)` : ''}`
@@ -84,21 +92,33 @@ class HealthMonitor {
    * Update current media (call when media changes)
    */
   updateMedia(mediaName, mediaIndex) {
-    console.log('[HealthMonitor] Media updated:', mediaName, 'index:', mediaIndex);
+    console.log('[HealthMonitor] Media updated:', mediaName);
     
     this.state.currentMedia = mediaName;
     this.state.mediaIndex = mediaIndex;
     this.state.lastMediaChange = new Date().toISOString();
-    this.state.playbackPosition = 0;
-    this.state.lastPlaybackPosition = 0;
-    this.lastPositionCheck = Date.now();
     
+    // ✅ RESET frozen counter when media changes
     this.frozenFrameCount = 0;
     this.state.isProgressing = true;
-    this.state.screenState = 'active';
+    this.state.playbackPosition = 0;
+    this.state.lastPlaybackPosition = 0;
     
-    this.clearError('media_load');
-    this.clearError('playback_frozen');
+    // ✅ FIX: Clear ALL warnings/errors from previous media
+    this.state.errors = this.state.errors.filter(err => 
+      err.type === 'cache_fallback' || // Keep cache warnings (playlist-level)
+      err.type === 'connection_lost' || // Keep network warnings (system-level)
+      err.type === 'reconnecting' // Keep reconnection status (system-level)
+    );
+    
+    // ✅ Reset health status if no critical errors remain
+    if (this.state.errors.length === 0) {
+      this.state.healthStatus = 'healthy';
+    }
+    
+    this.clearError('playback_frozen'); // Remove frozen warning
+    this.clearError('media_stuck'); // Remove stuck warning
+    this.clearError('media_load_error'); // Remove previous media load errors
   }
 
   /**
@@ -120,7 +140,7 @@ class HealthMonitor {
     const currentPos = this.state.playbackPosition;
     const lastPos = this.state.lastPlaybackPosition;
     
-    // ✅ ADD THIS: Skip frozen check for images/gifs (position is always 0)
+    // ADD THIS: Skip frozen check for images/gifs (position is always 0)
     if (currentPos === 0 && lastPos === 0) {
       this.frozenFrameCount = 0;
       this.state.isProgressing = true;
@@ -201,7 +221,7 @@ class HealthMonitor {
   }
 
   /**
-   * ✅ NEW: Add warning (less severe than error)
+   * NEW: Add warning (less severe than error)
    */
   addWarning(warningType, warningMessage) {
     const existingWarning = this.state.errors.find(e => e.type === warningType);
@@ -265,7 +285,7 @@ class HealthMonitor {
    */
   reportNetworkError(details) {
     console.log('[HealthMonitor] Network error:', details);
-    this.addError('network_error', details || 'Network connection issue');
+    this.addError('network_error', details || 'No Internet Connection');
   }
 
   /**
@@ -283,6 +303,30 @@ class HealthMonitor {
     console.log('[HealthMonitor] Screen error:', errorType);
     this.state.screenState = errorType;
     this.addError('screen_error', `Screen state: ${errorType}`);
+  }
+
+  /**
+   * Report reconnection attempt
+   */
+  reportReconnecting() {
+    console.log('[HealthMonitor] Reconnecting to internet');
+    // Clear the network error
+    this.clearError('network_error');
+    // Add a warning instead of error during reconnection
+    this.addWarning('reconnecting', 'Reconnecting to Internet');
+  }
+
+  /**
+   * Report successful reconnection
+   */
+  reportReconnected() {
+    console.log('[HealthMonitor] Successfully reconnected');
+    // ✅ CHANGE: Clear ALL errors, not just network-related ones
+    this.state.errors = [];
+    this.state.healthStatus = 'healthy';
+    this.state.screenState = 'active';
+    this.state.isCachedPlaylist = false;
+    this.state.cacheAge = null;
   }
 
   /**

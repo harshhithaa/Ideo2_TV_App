@@ -33,7 +33,8 @@ import {checkVersion} from 'react-native-check-version';
 import convertToProxyURL from 'react-native-video-cache';
 // ✅ ADD: Import health monitor
 import healthMonitor from '../services/healthMonitor';
-import { updateHeartbeatData } from '../services/monitorHeartbeat';
+import { updateHeartbeatData, startMonitorHeartbeat, initializeSocket } from '../services/monitorHeartbeat';
+import AsyncStorage from '@react-native-community/async-storage';
 
 class Main extends Component {
   constructor() {
@@ -76,14 +77,43 @@ class Main extends Component {
       this.setState({width: e.window.width, height: e.window.height});
     });
 
+    // ✅ NEW: Initialize socket and start heartbeat immediately
+    try {
+      const userData = await AsyncStorage.getItem('user');
+      if (userData) {
+        const user = JSON.parse(userData);
+        
+        // Initialize socket connection
+        await initializeSocket();
+        
+        // Start heartbeat with initial data
+        const playlistName = this.props.order?.CurrentPlaylistName || 
+                           this.props.order?.DefaultPlaylistName || 
+                           'Default';
+        
+        startMonitorHeartbeat({
+          monitorRef: user.MonitorRef,
+          monitorName: user.MonitorName,
+          currentPlaylist: playlistName,
+          playlistType: this.props.order?.PlaylistType || 'Default',
+          scheduleRef: this.props.order?.ScheduleRef || null,
+          totalMedia: this.props.order?.MediaList?.length || 0,
+          mediaIndex: 0,
+          currentMedia: this.props.order?.MediaList?.[0]?.MediaName || null,
+        }, 5000);
+        
+        console.log('[Main] Socket and heartbeat initialized on mount');
+      }
+    } catch (error) {
+      console.log('[Main] Error initializing socket/heartbeat:', error);
+    }
+
     // Fetch initial playlist
     this.props.fetchItems((error) => {
       if (error) {
         console.log('[Main] fetchItems error:', error);
-        // ✅ ADD: Report network error
         healthMonitor.reportNetworkError(error);
       } else {
-        // ✅ ADD: Clear network errors on success
         healthMonitor.clearError('network_error');
       }
       this.setState({loading: false});
@@ -268,8 +298,13 @@ class Main extends Component {
               onLoad={() => {
                 healthMonitor.clearError('media_load');
                 this.startMediaTimer(current.Duration || current.MediaDuration || 5);
-                // mark preloaded
                 this.setState(prev => ({ preloadedMedia: {...prev.preloadedMedia, [current.MediaRef]: true} }));
+                
+                // ✅ NEW: Send status update when image starts displaying
+                updateHeartbeatData({
+                  currentMedia: current.MediaName,
+                  mediaIndex: this.state.currentVideo,
+                });
               }}
               onError={(error) => {
                 healthMonitor.reportMediaError(current.MediaName, 'Failed to load image');
@@ -279,7 +314,15 @@ class Main extends Component {
             <Video
               source={{ uri: current?.MediaPath ? convertToProxyURL(current?.MediaPath) : null }}
               resizeMode={'stretch'}
-              onLoad={(data) => this.onVideoLoad(data, current)}
+              onLoad={(data) => {
+                this.onVideoLoad(data, current);
+                
+                // ✅ NEW: Send status update when video starts playing
+                updateHeartbeatData({
+                  currentMedia: current.MediaName,
+                  mediaIndex: this.state.currentVideo,
+                });
+              }}
               onProgress={(progress) => { healthMonitor.updatePlaybackPosition(progress.currentTime); }}
               onError={(err) => { healthMonitor.reportMediaError(current.MediaName, JSON.stringify(err)); this.handleEnd(); }}
               style={{ width: this.state.width, height: this.state.height }}

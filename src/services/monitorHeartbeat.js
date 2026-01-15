@@ -269,10 +269,76 @@ export const updateHeartbeatData = (updates) => {
 };
 
 /**
+ * Send explicit offline status when app closes
+ * This ensures the backend immediately knows the app is offline
+ */
+const sendOfflineStatus = async () => {
+  if (!socket || !socket.connected) {
+    console.log('[Socket] Cannot send offline status - not connected');
+    return;
+  }
+
+  try {
+    const userData = await AsyncStorage.getItem('user');
+    if (!userData) {
+      console.log('[Socket] No user data for offline status');
+      return;
+    }
+
+    const user = JSON.parse(userData);
+    const monitorRef = user.MonitorRef;
+    const monitorName = user.MonitorName;
+
+    if (!monitorRef) {
+      console.log('[Socket] No monitor ref for offline status');
+      return;
+    }
+
+    const offlineData = {
+      monitorRef: monitorRef,
+      monitorName: monitorName,
+      Status: 'offline', // ✅ Explicit offline status
+      currentPlaylist: null,
+      playlistType: 'Default',
+      scheduleRef: null,
+      currentMedia: null,
+      mediaIndex: 0,
+      totalMedia: 0,
+      playbackPosition: 0,
+      isProgressing: false,
+      screenState: 'inactive',
+      errors: [{
+        type: 'app_closed',
+        message: 'App closed by user',
+        severity: 'info',
+        timestamp: new Date().toISOString()
+      }],
+      healthStatus: 'offline',
+      lastMediaChange: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+    };
+
+    console.log('[Socket] Sending OFFLINE status on app close');
+    socket.emit('status_response', offlineData);
+  } catch (error) {
+    console.log('[Socket] Error sending offline status:', error);
+  }
+};
+
+/**
  * Disconnect socket - ❌ ONLY call this on app close/logout
  */
-export const disconnectSocket = () => {
+export const disconnectSocket = async () => {
   console.log('[Socket] Disconnecting');
+  
+  // ✅ FIX: Send offline status BEFORE disconnecting
+  try {
+    await sendOfflineStatus();
+    // Wait a brief moment for the offline status to be sent
+    await new Promise(resolve => setTimeout(resolve, 500));
+  } catch (error) {
+    console.log('[Socket] Error during offline status send:', error);
+  }
   
   stopMonitorHeartbeat();
   
@@ -281,3 +347,6 @@ export const disconnectSocket = () => {
     socket = null;
   }
 };
+
+// Export the new function
+export { sendOfflineStatus };

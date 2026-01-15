@@ -809,7 +809,21 @@ class Media extends Component {
     setTimeout(() => this.preloadNextMedia && this.preloadNextMedia(), 300);
   };
 
-  componentWillUnmount() {
+  componentWillUnmount = async () => {
+    // ✅ FIX: Send offline status FIRST before any cleanup
+    console.log('[Media] Component unmounting - sending offline status');
+    
+    try {
+      const { sendOfflineStatus } = require('../services/monitorHeartbeat');
+      await sendOfflineStatus();
+      console.log('[Media] Offline status sent successfully');
+    } catch (error) {
+      console.log('[Media] Error sending offline status:', error);
+    }
+    
+    // Reset health monitor when component unmounts (app closes)
+    console.log('[Media] Resetting health monitor');
+    healthMonitor.reset();
     healthMonitor.stop();
     
     this.clearTimers();
@@ -833,7 +847,11 @@ class Media extends Component {
       this.timeout = null;
     }
 
-    // ✅ REMOVED: Manual cleanup interval (cache manager handles this internally)
+    // Clear cache cleanup interval to prevent memory leak
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
   }
 
   renderView = () => {

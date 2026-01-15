@@ -128,8 +128,21 @@ class Main extends Component {
     }, 1800000);
   };
 
-  componentWillUnmount() {
-    // ✅ ADD: Stop health monitoring
+  componentWillUnmount = async () => {
+    // ✅ FIX: Send offline status FIRST before any cleanup
+    console.log('[Main] Component unmounting - sending offline status');
+    
+    try {
+      const { sendOfflineStatus } = require('../services/monitorHeartbeat');
+      await sendOfflineStatus();
+      console.log('[Main] Offline status sent successfully');
+    } catch (error) {
+      console.log('[Main] Error sending offline status:', error);
+    }
+    
+    // Reset health monitor when component unmounts (app closes)
+    console.log('[Main] Resetting health monitor');
+    healthMonitor.reset();
     healthMonitor.stop();
     
     this.clearTimers();

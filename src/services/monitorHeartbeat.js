@@ -87,19 +87,16 @@ export const initializeSocket = async () => {
       console.log(`[Socket] ✅ Reconnected after ${attemptNumber} attempts`);
       healthMonitor.reportReconnected();
       
-      if (currentHeartbeatData.currentPlaylist && currentHeartbeatData.totalMedia > 0) {
-        console.log('[Socket] Sending IMMEDIATE status after reconnection');
+      // ✅ CRITICAL FIX: Always send immediate status after reconnection
+      // This clears the "TV Internet Disconnected" error on backend
+      console.log('[Socket] Sending IMMEDIATE status after reconnection');
+      sendStatusUpdate();
+      
+      // ✅ Safety double-send after 1 second
+      setTimeout(() => {
+        console.log('[Socket] Sending safety follow-up status');
         sendStatusUpdate();
-        
-        // ✅ ADD: Safety double-send after 1 second
-         
-        setTimeout(() => {
-          console.log('[Socket] Sending safety follow-up status');
-          sendStatusUpdate();
-        }, 1000);
-      } else {
-        console.log('[Socket] ⚠️ Reconnected but no playlist data yet');
-      }
+      }, 1000);
     });
 
     socket.on('registration_confirmed', (data) => {

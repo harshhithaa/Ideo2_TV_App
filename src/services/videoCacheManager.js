@@ -131,7 +131,8 @@ class VideoCacheManager {
     const lastLog = this.lastProgressLog[mediaRef] || 0;
     const currentPercent = Math.floor(progress / 10) * 10;
     
-    if (currentPercent !== lastLog && currentPercent % 10 === 0) {
+    // ✅ FIX: Only log if we've moved to a NEW 10% bucket
+    if (currentPercent > lastLog && currentPercent % 10 === 0) {
       this.lastProgressLog[mediaRef] = currentPercent;
       return true;
     }

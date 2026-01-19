@@ -40,7 +40,8 @@ import cacheManager from '../services/videoCacheManager';
 import { 
   updateHeartbeatData, 
   startMonitorHeartbeat,
-  initializeSocket
+  initializeSocket,
+  forceSocketReconnect // ✅ ADD THIS IMPORT
 } from '../services/monitorHeartbeat';
 import healthMonitor from '../services/healthMonitor';
 import AsyncStorage from '@react-native-community/async-storage';
@@ -129,6 +130,23 @@ class Media extends Component {
 
     this.netInfoUnsubscribe = NetInfo.addEventListener(state => {
       console.log('[Media] Network state:', state.type, 'connected:', state.isConnected);
+      
+      // ✅ NEW: Detect when network comes back online
+      const wasOffline = this.previousNetworkState && !this.previousNetworkState.isConnected;
+      const isNowOnline = state.isConnected;
+      
+      if (wasOffline && isNowOnline) {
+        console.log('[Media] 🌐 Internet RETURNED - forcing socket reconnection');
+        
+        // Force socket reconnection
+        setTimeout(() => {
+          forceSocketReconnect();
+        }, 2000); // Wait 2 seconds for network to stabilize
+      }
+      
+      // Store current state for next comparison
+      this.previousNetworkState = state;
+      
       this.setState({
         connectionType: state.type,
         isConnected: state.isConnected

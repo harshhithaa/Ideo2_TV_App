@@ -53,6 +53,13 @@ export const initializeSocket = async () => {
       return socket;
     }
 
+    // ✅ NEW: Clean up existing disconnected socket before creating new one
+    if (socket) {
+      console.log('[Socket] Cleaning up existing disconnected socket');
+      socket.disconnect();
+      socket = null;
+    }
+
     const socketUrl = baseUrl.replace('/api/', '');
     console.log('[Socket] Connecting to:', socketUrl);
 
@@ -60,43 +67,60 @@ export const initializeSocket = async () => {
       transports: ['websocket'],
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
     });
 
     socket.on('connect', () => {
-      console.log('[Socket] Connected:', socket.id);
+      console.log('[Socket] ✅ Connected:', socket.id);
       healthMonitor.reportReconnected();
+      
+      const monitorRef = currentHeartbeatData.monitorRef;
+      const monitorName = currentHeartbeatData.monitorName;
+      
+      if (!monitorRef) {
+        console.log('[Socket] ⚠️ No monitorRef available, cannot register');
+        return;
+      }
+      
+      console.log('[Socket] 🔄 Registering monitor:', monitorRef);
       
       socket.emit('register_monitor', {
         monitorRef,
         monitorName,
       });
 
-      currentHeartbeatData.monitorRef = monitorRef;
-      currentHeartbeatData.monitorName = monitorName;
-      
-      // ✅ FIX: Send status immediately if data is ready
-      if (currentHeartbeatData.currentPlaylist && currentHeartbeatData.totalMedia > 0) {
-        console.log('[Socket] Sending IMMEDIATE status on connect');
-        sendStatusUpdate();
-      }
+      setTimeout(() => {
+        console.log('[Socket] 📤 Sending IMMEDIATE status after connect');
+        if (currentHeartbeatData.currentPlaylist && currentHeartbeatData.totalMedia > 0) {
+          sendStatusUpdate();
+        }
+      }, 500);
     });
 
-    // ✅ NEW: Add reconnect handler - CRITICAL for recovery
     socket.on('reconnect', (attemptNumber) => {
       console.log(`[Socket] ✅ Reconnected after ${attemptNumber} attempts`);
       healthMonitor.reportReconnected();
       
-      // ✅ CRITICAL FIX: Always send immediate status after reconnection
-      // This clears the "TV Internet Disconnected" error on backend
-      console.log('[Socket] Sending IMMEDIATE status after reconnection');
-      sendStatusUpdate();
+      const monitorRef = currentHeartbeatData.monitorRef;
+      const monitorName = currentHeartbeatData.monitorName;
       
-      // ✅ Safety double-send after 1 second
-      setTimeout(() => {
-        console.log('[Socket] Sending safety follow-up status');
-        sendStatusUpdate();
-      }, 1000);
+      if (!monitorRef) {
+        console.log('[Socket] ⚠️ No monitorRef available after reconnect');
+        return;
+      }
+      
+      console.log('[Socket] 🔄 Re-registering monitor after reconnect:', monitorRef);
+      
+      socket.emit('register_monitor', {
+        monitorRef,
+        monitorName,
+      });
+      
+      // ✅ REMOVED: Redundant status updates
+      // The 'registration_confirmed' handler will send status
+      // The periodic heartbeat sends status every 5s anyway
     });
 
     socket.on('registration_confirmed', (data) => {
@@ -107,8 +131,13 @@ export const initializeSocket = async () => {
       }
     });
 
-    socket.on('disconnect', () => {
-      console.log('[Socket] Disconnected');
+    socket.on('disconnect', (reason) => {
+      console.log('[Socket] Disconnected:', reason);
+      
+      if (reason === 'io server disconnect') {
+        console.log('[Socket] Server disconnected, reconnecting...');
+        socket.connect();
+      }
     });
 
     socket.on('connect_error', (error) => {
@@ -121,10 +150,9 @@ export const initializeSocket = async () => {
       healthMonitor.reportReconnecting();
     });
 
-    // ✅ NEW: Add reconnect_failed handler
     socket.on('reconnect_failed', () => {
-      console.log('[Socket] ❌ Reconnection failed after all attempts');
-      healthMonitor.reportNetworkError('Failed to reconnect');
+      console.log('[Socket] ❌ Reconnection failed, will keep trying...');
+      healthMonitor.reportNetworkError('Reconnection in progress');
     });
 
     socket.on('request_status', () => {
@@ -140,30 +168,56 @@ export const initializeSocket = async () => {
 };
 
 /**
+ * Force socket reconnection (call when network returns)
+ */
+export const forceSocketReconnect = () => {
+  console.log('[Socket] Force reconnect requested');
+  
+  if (!socket) {
+    console.log('[Socket] Socket not initialized, initializing now...');
+    initializeSocket();
+    return;
+  }
+  
+  if (socket.connected) {
+    console.log('[Socket] Already connected, socket ID:', socket.id);
+    return;
+  }
+  
+  console.log('[Socket] Forcing reconnection...');
+  socket.connect();
+  
+  // That's it! The 'connect' or 'reconnect' event handlers will handle the rest
+  // (registration, status updates, etc.)
+};
+
+/**
  * Send status update via socket - ✅ Now includes health data
  */
 // ✅ CHANGE: Make sendStatusUpdate more defensive
 const sendStatusUpdate = () => {
-  if (!socket || !socket.connected) {
-    console.log('[Socket] Cannot send status - not connected');
+  if (!socket) {
+    console.log('[Socket] ❌ Cannot send status - socket is null');
+    return;
+  }
+  
+  if (!socket.connected) {
+    console.log('[Socket] ❌ Cannot send status - socket not connected');
     return;
   }
 
-  // ✅ FIX: Use healthMonitor as source of truth (more reliable than currentHeartbeatData)
   const healthState = healthMonitor.getHealthState();
   
-  // ✅ CRITICAL: Only validate monitorRef, allow empty playlist during brief reconnection window
   if (!currentHeartbeatData.monitorRef) {
-    console.log('[Socket] Skipping status update - no monitor reference');
+    console.log('[Socket] ❌ Skipping status update - no monitor reference');
     return;
   }
 
   const statusData = {
     monitorRef: currentHeartbeatData.monitorRef,
     monitorName: currentHeartbeatData.monitorName,
-    Status: 'online', // ✅ ADD THIS LINE - explicit online status
+    Status: 'online', // ✅ Explicit online status
     
-    // ✅ Use healthMonitor state (preserves data across reconnections)
     currentPlaylist: healthState.currentPlaylist || currentHeartbeatData.currentPlaylist || 'Default',
     playlistType: healthState.playlistType || currentHeartbeatData.playlistType || 'Default',
     scheduleRef: healthState.scheduleRef !== undefined ? healthState.scheduleRef : currentHeartbeatData.scheduleRef,
@@ -181,11 +235,13 @@ const sendStatusUpdate = () => {
     timestamp: new Date().toISOString(),
   };
 
-  console.log('[Socket] Sending status:', {
+  console.log('[Socket] ✅ Sending status:', {
+    monitorRef: statusData.monitorRef,
     playlist: statusData.currentPlaylist,
     media: statusData.currentMedia,
-    healthStatus: statusData.healthStatus,
-    Status: statusData.Status // ✅ NEW: Log status field
+    Status: statusData.Status,
+    connected: socket.connected,
+    socketId: socket.id
   });
   
   socket.emit('status_response', statusData);
@@ -345,5 +401,5 @@ export const disconnectSocket = async () => {
   }
 };
 
-// Export the new function
+// Export sendOfflineStatus only (forceSocketReconnect is already exported above)
 export { sendOfflineStatus };

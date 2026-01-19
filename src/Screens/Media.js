@@ -623,7 +623,12 @@ class Media extends Component {
               retryAttempts: { ...prev.retryAttempts, [item.MediaRef]: 0 }
             }), () => {
               if (isCurrent) {
-                Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+                // ✅ FIX: Instantly show the video (no fade delay)
+                // Crossfade from previous video
+                Animated.parallel([
+                  Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+                  Animated.timing(this.nextOpacity, { toValue: 0, duration: 300, useNativeDriver: true })
+                ]).start();
               }
             });
           }}
@@ -777,11 +782,37 @@ class Media extends Component {
       currentMedia: nextItem.MediaName || null,
     });
 
-    // Crossfade animation
-    Animated.parallel([
-      Animated.timing(this.currentOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
-      Animated.timing(this.nextOpacity, { toValue: 1, duration: 300, useNativeDriver: true })
-    ]).start(() => {
+    // ✅ FIX: Wait for next video to be ready before transitioning
+    // For images/gifs, transition immediately
+    if (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif') {
+      Animated.parallel([
+        Animated.timing(this.currentOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+        Animated.timing(this.nextOpacity, { toValue: 1, duration: 300, useNativeDriver: true })
+      ]).start(() => {
+        this.setState(prev => {
+          const prevIndex = prev.currentVideo;
+          const newCurrent = prev.videos[nextIndex];
+          const prevCurrent = prev.videos[prevIndex];
+          const newPlaying = { ...prev.playing };
+          if (newCurrent) newPlaying[newCurrent.MediaRef] = true;
+          if (prevCurrent) newPlaying[prevCurrent.MediaRef] = false;
+          return {
+            currentVideo: nextIndex,
+            bufferIndex: prev.bufferIndex ^ 1,
+            playing: newPlaying
+          };
+        }, () => {
+          this.currentOpacity.setValue(1);
+          this.nextOpacity.setValue(0);
+          
+          setTimeout(() => {
+            this.preloadNextMedia();
+            this._isHandlingEnd = false;
+          }, 100);
+        });
+      });
+    } else {
+      // ✅ For videos: Update state first, let onReadyForDisplay handle the fade
       this.setState(prev => {
         const prevIndex = prev.currentVideo;
         const newCurrent = prev.videos[nextIndex];
@@ -795,15 +826,12 @@ class Media extends Component {
           playing: newPlaying
         };
       }, () => {
-        this.currentOpacity.setValue(1);
-        this.nextOpacity.setValue(0);
-        
         setTimeout(() => {
           this.preloadNextMedia();
           this._isHandlingEnd = false;
         }, 100);
       });
-    });
+    }
   };
 
   onVideoLoad = (data, item) => {
@@ -944,4 +972,3 @@ const mapDispatchToProps = dispatch => ({
 });
 
 export default connect(mapStateToProps, mapDispatchToProps)(Media);
-

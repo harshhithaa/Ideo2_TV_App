@@ -28,7 +28,18 @@ import {fetchItems} from '../services/Restaurant/actions';
 import SystemNavigationBar from 'react-native-system-navigation-bar';
 
 import Colors from '../Assets/Colors/Colors';
-import Orientation from 'react-native-orientation-locker';
+// Use maintained package and safe fallback if not present
+let Orientation;
+try {
+    Orientation = require('react-native-orientation-locker').default;
+} catch (e) {
+    // no-op fallback for environments without native orientation module
+    Orientation = {
+        lockToLandscape: () => {},
+        lockToPortrait: () => {},
+        unlockAllOrientations: () => {},
+    };
+}
 import Modal from 'react-native-modal';
 import logo from '../Assets/Logos/ideogram_logo.png';
 import {checkVersion} from 'react-native-check-version';
@@ -96,15 +107,17 @@ class Media extends Component {
       bufferIndex: 0,
       isInitializing: true,
       firstMediaReady: false,
-      sourceMap: {}, // ✅ Now stores local cache paths
+      sourceMap: {},
       playing: {},
       connectionType: 'wifi',
       isConnected: true,
       retryAttempts: {},
-      // ✅ NEW: Track download progress
       downloadProgress: {},
       cachingStatus: 'idle',
       playlistLoopCount: 0,
+      videoKey: 0,  // ✅ ADD THIS
+      expectedOrientation: 'landscape', // 'landscape' | 'portrait'
+      forceRotateFallback: false
     };
 
     this.currentOpacity = new Animated.Value(0);
@@ -220,16 +233,40 @@ class Media extends Component {
   };
 
   updateOrientation = orientation => {
-    if (orientation == 0 || orientation == 180) {
-      Orientation.unlockAllOrientations();
-      Orientation.lockToPortrait();
-    } else if (orientation == 90) {
-      Orientation.unlockAllOrientations();
-      Orientation.lockToLandscapeLeft();
-    } else if (orientation == 270) {
-      Orientation.unlockAllOrientations();
-      Orientation.lockToLandscapeRight();
-    }
+    // Normalize orientation to string/number and decide expected orientation
+    const o = orientation == null ? '' : String(orientation).trim();
+
+    // Default to landscape for TV apps when unknown
+    let expected = 'landscape';
+    if (o === '0' || o === '180' || o === 'portrait' || o === 'PORTRAIT') expected = 'portrait';
+    if (o === '90' || o === '270' || o === 'landscape' || o === 'LANDSCAPE') expected = 'landscape';
+
+    this.setState({ expectedOrientation: expected, forceRotateFallback: false }, async () => {
+      try {
+        Orientation.unlockAllOrientations();
+        // Preferred single API: lockToLandscape (works better across TV vendors)
+        if (expected === 'landscape') {
+          Orientation.lockToLandscape();
+        } else {
+          Orientation.lockToPortrait();
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // After short delay, if device still reports portrait while we expect landscape,
+      // enable visual fallback rotation (useful for boxes that ignore orientation APIs)
+      setTimeout(() => {
+        const dim = Dimensions.get('window');
+        const isPortraitNow = dim.width < dim.height;
+        if (expected === 'landscape' && isPortraitNow) {
+          // Enable fallback rotate transform
+          this.setState({ forceRotateFallback: true, width: dim.width, height: dim.height });
+        } else {
+          this.setState({ forceRotateFallback: false, width: dim.width, height: dim.height });
+        }
+      }, 650);
+    });
   };
 
   updateApp = () => {
@@ -578,12 +615,8 @@ class Media extends Component {
       );
     }
 
-    // ✅ FIXED: Only log once when video is mounted
     const uri = sourceMap[item.MediaRef] || item.MediaPath;
     const isCached = uri.startsWith('file://');
-    
-    // ✅ REMOVED: Excessive logging
-    // Only log when video actually loads, not every render
     
     const shouldPlay = isCurrent;
     const adaptiveBitRate = getAdaptiveBitRate(connectionType);
@@ -592,6 +625,7 @@ class Media extends Component {
     return (
       <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
         <Video
+          key={isCurrent ? this.state.videoKey : undefined}  // ✅ ADD THIS
           source={{ uri }}
           resizeMode={'stretch'}
           repeat={false}
@@ -623,8 +657,6 @@ class Media extends Component {
               retryAttempts: { ...prev.retryAttempts, [item.MediaRef]: 0 }
             }), () => {
               if (isCurrent) {
-                // ✅ FIX: Instantly show the video (no fade delay)
-                // Crossfade from previous video
                 Animated.parallel([
                   Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
                   Animated.timing(this.nextOpacity, { toValue: 0, duration: 300, useNativeDriver: true })
@@ -634,7 +666,6 @@ class Media extends Component {
           }}
           
           onLoad={(data) => {
-            // ✅ FIXED: Only log important info
             if (isCurrent) {
               console.log(`[Media] ✓ Video loaded: ${item.MediaName} (${isCached ? 'CACHED' : 'STREAMING'})`);
               
@@ -653,7 +684,6 @@ class Media extends Component {
 
             try { healthMonitor.clearError && healthMonitor.clearError('media_load'); } catch (e) {}
             
-            // ✅ FIXED: Only preload once per media
             if (isCurrent && !this.preloadTriggered) {
               this.preloadTriggered = true;
               setTimeout(() => {
@@ -675,7 +705,8 @@ class Media extends Component {
             if (currentRetries < maxRetries && isConnected) {
               console.log(`[Media] Retry ${currentRetries + 1}/${maxRetries}`);
               this.setState(prev => ({
-                retryAttempts: { ...prev.retryAttempts, [item.MediaRef]: currentRetries + 1 }
+                retryAttempts: { ...prev.retryAttempts, [item.MediaRef]: currentRetries + 1 },
+                videoKey: prev.videoKey + 1  // ✅ ADD: Force remount on retry
               }), () => {
                 setTimeout(() => this.forceUpdate(), 2000);
               });
@@ -692,9 +723,6 @@ class Media extends Component {
           onProgress={(progress) => {
             if (isCurrent && progress.currentTime > 0) {
               healthMonitor.updatePlaybackPosition(progress.currentTime);
-              
-              // ✅ REMOVED: preloadNextMedia call from onProgress
-              // It's already called once in onLoad
             }
           }}
           
@@ -707,7 +735,6 @@ class Media extends Component {
   };
 
   handleEnd = () => {
-    // ✅ CRITICAL: Prevent duplicate calls
     if (this._isHandlingEnd) {
       console.log('[Media] handleEnd already in progress, ignoring duplicate call');
       return;
@@ -733,19 +760,40 @@ class Media extends Component {
       const newLoopCount = playlistLoopCount + 1;
       console.log(`[Media] Playlist loop ${newLoopCount} complete`);
       this.setState({ playlistLoopCount: newLoopCount });
+      
+      // ✅ ADD: Increment videoKey when looping back to first video
+      const firstItem = videos[0];
+      if (firstItem?.MediaType === 'video') {
+        this.setState(prev => ({ videoKey: prev.videoKey + 1 }));
+      }
     }
 
-    // Single media case
     if (videos.length === 1) {
       console.log('[Media] Single media, restarting');
       const item = videos[0];
-      healthMonitor.updateMedia(item.MediaName, 0);
       
-      if (item.MediaType === 'image' || item.MediaType === 'gif') {
+      healthMonitor.updateMedia(item.MediaName, 0);
+      updateHeartbeatData({
+        mediaIndex: 0,
+        currentMedia: item.MediaName || null,
+      });
+      
+      if (item.MediaType === 'video') {
+        // ✅ ADD: Re-check cache for updated path
+        const uri = this.state.sourceMap[item.MediaRef] || item.MediaPath;
+        console.log(`[Media] Restarting with URI: ${uri}`);
+        
+        this.setState(prev => ({
+          videoKey: (prev.videoKey || 0) + 1  // ✅ FIXED
+        }), () => {
+          console.log('[Media] Video remounted with key:', this.state.videoKey);
+          this._isHandlingEnd = false;
+        });
+      } else {
         this.startMediaTimer(item.Duration);
+        this._isHandlingEnd = false;
       }
       
-      this._isHandlingEnd = false;
       return;
     }
 
@@ -782,8 +830,6 @@ class Media extends Component {
       currentMedia: nextItem.MediaName || null,
     });
 
-    // ✅ FIX: Wait for next video to be ready before transitioning
-    // For images/gifs, transition immediately
     if (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif') {
       Animated.parallel([
         Animated.timing(this.currentOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
@@ -812,7 +858,6 @@ class Media extends Component {
         });
       });
     } else {
-      // ✅ For videos: Update state first, let onReadyForDisplay handle the fade
       this.setState(prev => {
         const prevIndex = prev.currentVideo;
         const newCurrent = prev.videos[nextIndex];
@@ -930,8 +975,12 @@ class Media extends Component {
   };
 
   render() {
+    const { forceRotateFallback } = this.state;
+    const containerStyles = [styles.container];
+    if (forceRotateFallback) containerStyles.push(styles.forceRotateContainer);
+
     return (
-      <View style={styles.container}>
+      <View style={containerStyles}>
         {this.state.loading ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator color={'#FFA500'} size="large" />
@@ -949,6 +998,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  // Fallback: rotate the whole UI 90deg when system stays portrait
+  forceRotateContainer: {
+    transform: [{ rotate: '90deg' }],
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
   },
   centerContainer: {
     flex: 1,

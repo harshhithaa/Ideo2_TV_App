@@ -1,0 +1,55 @@
+export const FETCH_ITEMS = 'FETCH_ITEMS';
+export const SET_ITEMS = 'SET_ITEMS';
+export const FETCH_RESTAURANT_LIST = 'FETCH_RESTAURANT_LIST';
+export const SET_CURRENT_RESTAURANT = 'SET_CURRENT_RESTAURANT';
+export const UPDATE_ORDER = 'UPDATE_ORDER';
+export const CLEAR_ORDER = 'CLEAR_ORDER';
+export const CLEAR_ORDERCON = 'CLEAR_ORDERCON';
+export const SET_STATUS = 'SET_STATUS';
+export const SET_RIDER = 'SET_RIDER';
+export const SET_STATUSLOG = 'SET_STATUSLOG';
+export const SET_AMOUNT = 'SET_AMOUNT';
+export const SET_WALLET = 'SET_WALLET';
+export const TEMP_STATUS = 'TEMP_STATUS';
+
+
+export const ERROR = 'ERROR';
+export const TRUE = 'TRUE';
+export const FINAL_BILL = 'FINAL_BILL';
+export const SET_PROMO = 'SET_PROMO';
+export const SET_DELIVERY = 'SET_DELIVERY';
+export const SET_MAX = 'SET_MAX';
+export const SET_DISCOUNTEDCOST = 'SET_DISCOUNTEDCOST';
+export const UPDATE_ORDERCON = 'UPDATE_ORDERCON';
+export const UPDATE_ORDERNOW = 'UPDATE_ORDERNOW';
+export const NEW_ORDER = 'NEW_ORDER';
+export const SET_ORDERREF = 'SET_ORDERREF';
+export const ORDER_DETAILS = 'ORDER_DETAILS';
+
+export const SET_GRANDTOTAL = 'SET_GRANDTOTAL';
+export const FETCH_WALLET = 'FETCH_WALLET';
+export const FETCH_BASE = 'FETCH_BASE';
+export const SET_DELIVERYREF = 'SET_DELIVERYREF';
+export const PLACE_ORDER = 'PLACE_ORDER';
+export const FETCH_PROMO = 'FETCH_PROMO';
+export const SET_CART = 'SET_CART';
+export const SAVE_PROMO = 'SAVE_PROMO';
+export const DISH_DET = 'DISH_DET';
+export const WALLET_CHARGE = 'WALLET_CHARGE';
+export const PROMO_CHARGE = 'PROMO_CHARGE';
+export const SET_QUESTIONS = 'SET_QUESTIONS';
+export const SET_TRIVIA = 'SET_TRIVIA';
+SET_TRIVIA
+export const DELI_CHARGE = 'DELI_CHARGE';
+export const SET_DISH_TYPES = 'SET_DISH_TYPES';
+export const SET_FEEDBACK = 'SET_FEEDBACK';
+export const REASON = 'REASON';
+export const PHONE = 'PHONE';
+export const ID = 'ID';
+export const SET_TAXED = 'SET_TAXED';
+export const ACtualAmount = 'ActualAmount';
+export const FETCH_OFFER = 'FETCH_OFFER';
+export const GETBOOKINGSETTINGS = 'GETBOOKINGSETTINGS';
+export const CONFIRMBOOKING = 'CONFIRMBOOKING';
+export const GETBOOKINGLIST = 'GETBOOKINGLIST';
+export const GETBOOKINGDETAILS = 'GETBOOKINGDETAILS';

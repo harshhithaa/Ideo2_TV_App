@@ -499,13 +499,25 @@ class Media extends Component {
     }
 
     // Videos
-    if (nextItem.MediaType === 'video') {
-      if (this.downloadInProgress.has(nextItem.MediaRef)) {
-        return;
-      }
+    // Videos
+if (nextItem.MediaType === 'video') {
+  // ✅ Only download during images, not during videos
+  const currentItem = videos[currentVideo];
+  if (currentItem?.MediaType === 'video') {
+    console.log('[Media] Skipping download - video currently playing');
+    // Still set the streaming URL so it can play
+    this.setState(prev => ({
+      sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: nextItem.MediaPath }
+    }));
+    return;
+  }
 
-      try {
-        const cachedPath = await cacheManager.getCachedPath(nextItem.MediaRef, nextItem.MediaPath);
+  if (this.downloadInProgress.has(nextItem.MediaRef)) {
+    return;
+  }
+
+  try {
+    const cachedPath = await cacheManager.getCachedPath(nextItem.MediaRef, nextItem.MediaPath);
         
         if (cachedPath) {
           console.log(`[Media] ✓ Next video already cached: ${nextItem.MediaName}`);
@@ -669,7 +681,7 @@ class Media extends Component {
             if (isCurrent) {
               console.log(`[Media] ✓ Video loaded: ${item.MediaName} (${isCached ? 'CACHED' : 'STREAMING'})`);
               
-              const adminDuration = item?.Duration;
+              const adminDuration = item?.Duration || item?.MediaDuration; // ✅ Use MediaDuration if Duration is null
               const naturalDuration = data?.duration || 0;
               let useSeconds = 10;
               
@@ -823,13 +835,13 @@ class Media extends Component {
 
     console.log(`[Media] Advancing from ${currentVideo} to ${nextIndex}`);
     console.log(`[Media] Next media: ${nextItem.MediaName} (${nextItem.MediaType})`);
-
+    
     healthMonitor.updateMedia(nextItem.MediaName, nextIndex);
     updateHeartbeatData({
       mediaIndex: nextIndex,
       currentMedia: nextItem.MediaName || null,
     });
-
+    
     if (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif') {
       Animated.parallel([
         Animated.timing(this.currentOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
@@ -842,10 +854,31 @@ class Media extends Component {
           const newPlaying = { ...prev.playing };
           if (newCurrent) newPlaying[newCurrent.MediaRef] = true;
           if (prevCurrent) newPlaying[prevCurrent.MediaRef] = false;
+          
+          // Cleanup old state entries
+          const keepRefs = new Set();
+          for (let i = 0; i < 3; i++) {
+            const idx = (nextIndex + i) % prev.videos.length;
+            if (prev.videos[idx]) keepRefs.add(prev.videos[idx].MediaRef);
+          }
+          
+          const cleanedSourceMap = {};
+          const cleanedPreloaded = {};
+          const cleanedRetries = {};
+          
+          keepRefs.forEach(ref => {
+            if (prev.sourceMap[ref]) cleanedSourceMap[ref] = prev.sourceMap[ref];
+            if (prev.preloadedMedia[ref]) cleanedPreloaded[ref] = prev.preloadedMedia[ref];
+            if (prev.retryAttempts[ref]) cleanedRetries[ref] = prev.retryAttempts[ref];
+          });
+          
           return {
             currentVideo: nextIndex,
             bufferIndex: prev.bufferIndex ^ 1,
-            playing: newPlaying
+            playing: newPlaying,
+            sourceMap: cleanedSourceMap,
+            preloadedMedia: cleanedPreloaded,
+            retryAttempts: cleanedRetries,
           };
         }, () => {
           this.currentOpacity.setValue(1);
@@ -865,10 +898,31 @@ class Media extends Component {
         const newPlaying = { ...prev.playing };
         if (newCurrent) newPlaying[newCurrent.MediaRef] = true;
         if (prevCurrent) newPlaying[prevCurrent.MediaRef] = false;
+        
+        // Cleanup old state entries
+        const keepRefs = new Set();
+        for (let i = 0; i < 3; i++) {
+          const idx = (nextIndex + i) % prev.videos.length;
+          if (prev.videos[idx]) keepRefs.add(prev.videos[idx].MediaRef);
+        }
+        
+        const cleanedSourceMap = {};
+        const cleanedPreloaded = {};
+        const cleanedRetries = {};
+        
+        keepRefs.forEach(ref => {
+          if (prev.sourceMap[ref]) cleanedSourceMap[ref] = prev.sourceMap[ref];
+          if (prev.preloadedMedia[ref]) cleanedPreloaded[ref] = prev.preloadedMedia[ref];
+          if (prev.retryAttempts[ref]) cleanedRetries[ref] = prev.retryAttempts[ref];
+        });
+        
         return {
           currentVideo: nextIndex,
           bufferIndex: prev.bufferIndex ^ 1,
-          playing: newPlaying
+          playing: newPlaying,
+          sourceMap: cleanedSourceMap,
+          preloadedMedia: cleanedPreloaded,
+          retryAttempts: cleanedRetries,
         };
       }, () => {
         setTimeout(() => {

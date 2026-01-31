@@ -84,6 +84,8 @@ export const fetchItems = callback => async dispatch => {
 export const fetchscreenref = (payload, callback) => async dispatch => {
   try {
     console.log("[Login] Attempting login...");
+    console.log("[Login] Payload:", payload);
+    console.log("[Login] Base URL:", baseUrl);
 
     const response = await axios({
       method: 'POST',
@@ -94,10 +96,11 @@ export const fetchscreenref = (payload, callback) => async dispatch => {
         Authorization: 'TlozR28zTWNlSTp3YnB1MkpKQ3cy',
       },
       data: payload,
+      timeout: 15000, // Add timeout to prevent hanging
     });
 
     const items = response.data;
-    console.log("[Login] Response:", items);
+    console.log("[Login] Response received:", items);
 
     if (items?.Error) {
       callback({ err: items.Error });
@@ -134,8 +137,19 @@ export const fetchscreenref = (payload, callback) => async dispatch => {
 
     callback();
   } catch (error) {
-    console.log("[Login] Error:", error);
-    callback(error.message || error);
+    console.log("[Login] Error occurred:", error);
+    console.log("[Login] Error message:", error.message);
+    console.log("[Login] Error response:", error.response?.data);
+    console.log("[Login] Error status:", error.response?.status);
+    console.log("[Login] Error code:", error.code);
+    
+    if (error.code === 'ECONNABORTED') {
+      callback({ err: { ErrorMessage: 'Request timeout - server not responding' } });
+    } else if (error.message.includes('Network Error') || error.code === 'ERR_NETWORK') {
+      callback({ err: { ErrorMessage: 'Network error - cannot reach server' } });
+    } else {
+      callback(error.message || error);
+    }
   }
 };
 

@@ -17,7 +17,6 @@ try {
     RNNetInfo = maybeNetInfo;
   } else {
     RNNetInfo = null;
-    console.warn('[SafeNetInfo] Native NetInfo interface missing or incompatible — using fallback');
   }
 } catch (e) {
   RNNetInfo = null;

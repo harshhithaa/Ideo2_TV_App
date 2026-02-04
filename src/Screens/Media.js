@@ -700,6 +700,8 @@ class Media extends Component {
         bufferForPlaybackAfterRebufferMs: 10000,
       };
 
+      const { width, height } = this.state;
+      
       return (
         <Video
           key={`video-${item.MediaRef}-${videoKey}`}
@@ -710,13 +712,18 @@ class Media extends Component {
           }}
           source={{ uri }}
           style={[
-            styles.centerContainer,
             {
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: width,
+              height: height,
+              backgroundColor: '#000',
               opacity: isActive ? 1 : 0,
               zIndex: isActive ? 10 : 1,
             },
           ]}
-          resizeMode={orientation === 2 ? 'contain' : 'cover'}
+          resizeMode="stretch"
           repeat={false}
           paused={!isActive}
           muted={false}
@@ -765,9 +772,12 @@ class Media extends Component {
       
       const animatedStyle = {
         position: 'absolute',
+        top: 0,
+        left: 0,
         width,
         height,
-        opacity: isActive ? this.currentOpacity : this.nextOpacity,
+        backgroundColor: '#000',
+        opacity: isActive ? this.currentOpacity : 0,
         zIndex: isActive ? 10 : 1,
       };
 
@@ -976,8 +986,7 @@ class Media extends Component {
     // ✅ REMOVED: Caching indicator (no longer shown on screen)
     
     return (
-      <View style={{ flex: 1, width, height }}>
-        {this.renderStackedMedia(nextItem, 'next')}
+      <View style={{ flex: 1, width, height, backgroundColor: '#000' }}>
         {this.renderStackedMedia(currentItem, 'current')}
       </View>
     );

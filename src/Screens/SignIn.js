@@ -143,9 +143,8 @@ class PhoneAuth extends Component {
 
   render() {
     const effectiveShift = this.state.keyboardVisible
-      ? (this.state.keyboardHeight || 300) * 0.40
+      ? (this.state.keyboardHeight || 300) * 0.33
       : 0;
-    const shiftStyle = { transform: [{ translateY: -effectiveShift }] };
 
     return (
       <SafeAreaView style={styles.container}>
@@ -162,60 +161,54 @@ class PhoneAuth extends Component {
             </View>
 
             <View style={styles.rightCol}>
-              <ScrollView 
-                contentContainerStyle={[styles.formScroll, shiftStyle]}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                <View style={styles.formInner}>
-                  <Text style={styles.signInHeading}>Sign In</Text>
+              <View style={[styles.formContainer, { marginTop: -effectiveShift }]}>
+                <Text style={styles.signInHeading}>Sign In</Text>
 
-                  <View style={styles.field}>
-                    <TextInput
-                      ref={this.screenInputRef}
-                      placeholder="Screen Name"
-                      placeholderTextColor={colors.lightFontColor}
-                      value={this.state.screen}
-                      onChangeText={(screen) => this.setState({ screen })}
-                      style={styles.textInput}
-                      returnKeyType="next"
-                      keyboardType="default"
-                      onSubmitEditing={() => this.passwordInputRef.current?.focus?.()}
-                      onFocus={this.handleInputFocus}
-                      onBlur={this.handleInputBlur}
-                      hasTVPreferredFocus={true}
-                    />
-                  </View>
+                <View style={styles.field}>
+                  <TextInput
+                    ref={this.screenInputRef}
+                    placeholder="Screen Name"
+                    placeholderTextColor={colors.lightFontColor}
+                    value={this.state.screen}
+                    onChangeText={(screen) => this.setState({ screen })}
+                    style={styles.textInput}
+                    returnKeyType="next"
+                    keyboardType="default"
+                    onSubmitEditing={() => this.passwordInputRef.current?.focus?.()}
+                    onFocus={this.handleInputFocus}
+                    onBlur={this.handleInputBlur}
+                    hasTVPreferredFocus={true}
+                  />
+                </View>
 
-                  <View style={[styles.field, { marginTop: 16 }]}>
-                    <TextInput
-                      ref={this.passwordInputRef}
-                      placeholder="Password"
-                      placeholderTextColor={colors.lightFontColor}
-                      value={this.state.password}
-                      onChangeText={(password) => this.setState({ password })}
-                      secureTextEntry={this.state.passwordHidden}
-                      style={[styles.textInput, { paddingRight: 80 }]}
-                      returnKeyType="done"
-                      onSubmitEditing={this.signIn}
-                      onFocus={this.handleInputFocus}
-                      onBlur={this.handleInputBlur}
-                    />
-                    <TouchableOpacity onPress={this.togglePassword} style={styles.showBtn}>
-                      <Text style={styles.showText}>{this.state.passwordHidden ? 'Show' : 'Hide'}</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <TouchableOpacity 
-                    ref={this.signInButtonRef}
-                    style={styles.primaryBtn} 
-                    onPress={this.signIn} 
-                    activeOpacity={0.9}
-                  >
-                    <Text style={styles.primaryBtnText}>Sign in now</Text>
+                <View style={[styles.field, { marginTop: 16 }]}>
+                  <TextInput
+                    ref={this.passwordInputRef}
+                    placeholder="Password"
+                    placeholderTextColor={colors.lightFontColor}
+                    value={this.state.password}
+                    onChangeText={(password) => this.setState({ password })}
+                    secureTextEntry={this.state.passwordHidden}
+                    style={[styles.textInput, { paddingRight: 80 }]}
+                    returnKeyType="done"
+                    onSubmitEditing={this.signIn}
+                    onFocus={this.handleInputFocus}
+                    onBlur={this.handleInputBlur}
+                  />
+                  <TouchableOpacity onPress={this.togglePassword} style={styles.showBtn}>
+                    <Text style={styles.showText}>{this.state.passwordHidden ? 'Show' : 'Hide'}</Text>
                   </TouchableOpacity>
                 </View>
-              </ScrollView>
+
+                <TouchableOpacity 
+                  ref={this.signInButtonRef}
+                  style={styles.primaryBtn} 
+                  onPress={this.signIn} 
+                  activeOpacity={0.9}
+                >
+                  <Text style={styles.primaryBtnText}>Sign in now</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -234,9 +227,8 @@ const styles = StyleSheet.create({
   welcomeTitle: { fontSize: responsiveFontSize(1.8), fontWeight: '700', color: '#333', marginBottom: 8 },
   welcomeDesc: { fontSize: responsiveFontSize(1.5), color: '#666', textAlign: 'center', lineHeight: 20 },
   rightCol: { flex: 1, backgroundColor: '#ffffff', justifyContent: 'center', paddingHorizontal: responsiveWidth(8) },
-  formScroll: { flexGrow: 1, justifyContent: 'center', paddingVertical: 30 },
-  formInner: { width: '100%', maxWidth: 520, alignSelf: 'center' },
-  signInHeading: { fontSize: responsiveFontSize(2.6), fontWeight: '700', color: '#111', marginBottom: 12 },
+  formContainer: { width: '100%', maxWidth: 520, alignSelf: 'center' },
+  signInHeading: { fontSize: responsiveFontSize(2.6), fontWeight: '700', color: '#111', marginBottom: 5 },
   field: {
     width: '100%',
     backgroundColor: '#ffffff',

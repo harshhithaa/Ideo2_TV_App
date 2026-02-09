@@ -117,7 +117,10 @@ class Media extends Component {
       playlistLoopCount: 0,
       videoKey: 0,
       expectedOrientation: 'landscape',
-      forceRotateFallback: false
+      forceRotateFallback: false,
+      isOfflineMode: false,
+      cachedPlaylist: [],
+      originalPlaylist: []
     };
 
     this.currentOpacity = new Animated.Value(1); // FIX: Start at 1 so first image is visible
@@ -215,6 +218,8 @@ class Media extends Component {
       // Detect when network comes back online
       const wasOffline = this.previousNetworkState && !this.previousNetworkState.isConnected;
       const isNowOnline = state.isConnected;
+      const wasOnline = this.previousNetworkState && this.previousNetworkState.isConnected;
+      const isNowOffline = !state.isConnected;
 
       if (wasOffline && isNowOnline) {
         console.log('[Media] 🌐 Internet RETURNED - forcing socket reconnection');
@@ -223,6 +228,15 @@ class Media extends Component {
         setTimeout(() => {
           forceSocketReconnect();
         }, 2000);
+
+        // Exit offline mode and restore original playlist
+        this.exitOfflineMode();
+      }
+
+      // Detect when network is lost - enter offline mode
+      if (wasOnline && isNowOffline) {
+        console.log('[Media] ⚠️ Internet LOST - entering offline mode');
+        this.enterOfflineMode();
       }
 
       // Store current state for next comparison
@@ -334,6 +348,115 @@ class Media extends Component {
         }
       }, 650);
     });
+  };
+
+  /**
+   * Enter offline mode - filter playlist to cached items only
+   * ✅ NEW: Prevents blank screen when internet is lost
+   */
+  enterOfflineMode = async () => {
+    console.log('[Media] 🔴 Entering offline mode - filtering to cached media only');
+    
+    const currentPlaylist = this.state.videos;
+    if (!currentPlaylist || currentPlaylist.length === 0) {
+      console.log('[Media] No playlist to filter');
+      return;
+    }
+
+    // Save original playlist
+    this.safeSetState({ originalPlaylist: currentPlaylist });
+
+    // Filter to only cached items
+    const cachedItems = [];
+    for (const item of currentPlaylist) {
+      const mediaRef = item.MediaRef;
+      const mediaPath = item.MediaPath;
+      
+      // Check if this item is cached
+      const cachedPath = await cacheManager.getCachedPath(mediaRef, mediaPath);
+      
+      if (cachedPath) {
+        console.log('[Media] ✓ Cached:', item.MediaName);
+        cachedItems.push(item);
+      } else {
+        console.log('[Media] ✗ Not cached:', item.MediaName);
+      }
+    }
+
+    if (cachedItems.length === 0) {
+      console.log('[Media] ⚠️ No cached items available - keeping current item');
+      // Keep at least the current item to avoid blank screen
+      const currentItem = currentPlaylist[this.state.currentVideo];
+      if (currentItem) {
+        cachedItems.push(currentItem);
+      }
+    }
+
+    console.log(`[Media] Offline playlist: ${cachedItems.length}/${currentPlaylist.length} items`);
+
+    this.safeSetState({
+      isOfflineMode: true,
+      cachedPlaylist: cachedItems,
+      videos: cachedItems,
+    });
+
+    healthMonitor.addWarning('offline_mode', `Playing ${cachedItems.length} cached items`);
+
+    // ✅ NEW: Check if current item is cached, if not, jump to first cached item
+    const currentItem = currentPlaylist[this.state.currentVideo];
+    const currentCachedPath = await cacheManager.getCachedPath(currentItem?.MediaRef, currentItem?.MediaPath);
+    
+    if (!currentCachedPath && cachedItems.length > 0) {
+      console.log('[Media] Current item not cached - jumping to first cached item');
+      
+      // Clear timers to stop current playback
+      this.clearTimers();
+      
+      // Jump to first cached item
+      const firstCachedItem = cachedItems[0];
+      this.safeSetState({ currentVideo: 0 });
+      
+      healthMonitor.updateMedia(firstCachedItem.MediaName, 0);
+      updateHeartbeatData({
+        currentMedia: firstCachedItem.MediaName,
+        mediaIndex: 0,
+      });
+      
+      // Preload and start playing
+      await this.preloadFirstMedia(firstCachedItem);
+      
+      if (firstCachedItem.MediaType === 'image' || firstCachedItem.MediaType === 'gif') {
+        const dur = firstCachedItem.Duration || 10;
+        this.startMediaTimer(dur);
+      }
+      
+      setTimeout(() => this.preloadNextMedia(), 300);
+    }
+  };
+
+  /**
+   * Exit offline mode - restore original playlist
+   * ✅ NEW: Called when internet returns
+   */
+  exitOfflineMode = () => {
+    console.log('[Media] 🟢 Exiting offline mode - restoring full playlist');
+    
+    const { originalPlaylist } = this.state;
+    
+    if (!originalPlaylist || originalPlaylist.length === 0) {
+      console.log('[Media] No original playlist to restore');
+      return;
+    }
+
+    this.safeSetState({
+      isOfflineMode: false,
+      videos: originalPlaylist,
+      cachedPlaylist: [],
+      originalPlaylist: []
+    });
+
+    healthMonitor.clearError('offline_mode');
+    console.log('[Media] ✓ Full playlist restored');
   };
 
   getdta = () => {
@@ -724,8 +847,27 @@ class Media extends Component {
           onEnd={this.handleEnd}
           onError={(error) => {
             console.log(`[Media] ❌ Video error (${item.MediaName}):`, error);
-            healthMonitor.reportMediaError(item.MediaName, error?.error?.errorString);
-            this.handleEnd();
+            
+            // ✅ NEW: Detect network-related errors and enter offline mode
+            const errorString = error?.error?.errorString || error?.error?.localizedDescription || '';
+            const isNetworkError = 
+              errorString.includes('network') || 
+              errorString.includes('timeout') ||
+              errorString.includes('connection') ||
+              errorString.includes('unreachable') ||
+              error?.error?.code === -1009 || // Network connection lost (iOS)
+              error?.error?.code === -1001; // Request timed out (iOS)
+            
+            if (isNetworkError && !this.state.isOfflineMode) {
+              console.log('[Media] 🌐 Network error detected - entering offline mode');
+              this.enterOfflineMode().then(() => {
+                // After entering offline mode, skip to next cached item
+                this.handleEnd();
+              });
+            } else {
+              healthMonitor.reportMediaError(item.MediaName, errorString);
+              this.handleEnd();
+            }
           }}
           
           // ✅ CRITICAL: Memory-safe buffer configuration
@@ -804,7 +946,7 @@ class Media extends Component {
   };
 
   handleEnd = async () => {
-  const { videos, currentVideo, playlistLoopCount } = this.state;
+  const { videos, currentVideo, playlistLoopCount, isOfflineMode } = this.state;
 
   if (!videos || videos.length === 0) {
     console.log('[Media] No videos in playlist');
@@ -819,8 +961,35 @@ class Media extends Component {
                      currentItem?.FileSize && 
                      currentItem.FileSize > 500 * 1024 * 1024; // 500MB threshold
 
-  const nextIndex = (currentVideo + 1) % videos.length;
-  const nextItem = videos[nextIndex];
+  let nextIndex = (currentVideo + 1) % videos.length;
+  let nextItem = videos[nextIndex];
+
+  // ✅ NEW: In offline mode, skip to next cached item
+  if (isOfflineMode) {
+    let attempts = 0;
+    const maxAttempts = videos.length;
+    
+    while (attempts < maxAttempts) {
+      const mediaRef = nextItem?.MediaRef;
+      const mediaPath = nextItem?.MediaPath;
+      const cachedPath = await cacheManager.getCachedPath(mediaRef, mediaPath);
+      
+      if (cachedPath) {
+        console.log('[Media] ✓ Next cached item found:', nextItem.MediaName);
+        break;
+      } else {
+        console.log('[Media] ⏭️ Skipping uncached item:', nextItem.MediaName);
+        nextIndex = (nextIndex + 1) % videos.length;
+        nextItem = videos[nextIndex];
+        attempts++;
+      }
+    }
+    
+    if (attempts >= maxAttempts) {
+      console.log('[Media] ⚠️ No cached items available - staying on current');
+      return;
+    }
+  }
 
   // ✅ FIX: Increment videoKey for EVERY video (not just at index 0)
   // Increment by 10 for large files to force complete component recreation

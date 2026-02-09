@@ -172,7 +172,6 @@ class Media extends Component {
 
     try {
       await this.updateOrientation(this.props.order?.Orientation);
-      await this.updateApp();
       await this.getdta();
     } catch (error) {
       console.log('[Media] Mount error:', error);
@@ -335,12 +334,6 @@ class Media extends Component {
         }
       }, 650);
     });
-  };
-
-  updateApp = () => {
-    Linking.openURL(
-      'https://play.google.com/store/apps/details?id=com.ideogram',
-    );
   };
 
   getdta = () => {

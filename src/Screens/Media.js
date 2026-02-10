@@ -131,6 +131,7 @@ class Media extends Component {
     this.netInfoUnsubscribe = null;
     this.preloadTriggered = false;
     this.downloadInProgress = new Set();
+    this.MAX_CONCURRENT_DOWNLOADS = 1; // ✅ Limit concurrent downloads for stability
 
     // Refs for safe unload of native video resources (if supported)
     this.currentVideoRef = null;
@@ -620,6 +621,36 @@ class Media extends Component {
             preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true },
             sourceMap: { ...prev.sourceMap, [item.MediaRef]: item.MediaPath }
           }));
+          
+          // ✅ NEW: For single-video playlists, start background download while streaming
+          const isSingleVideoPlaylist = this.state.videos?.length === 1;
+          if (isSingleVideoPlaylist && this.state.isConnected && !this.downloadInProgress.has(item.MediaRef)) {
+            console.log(`[Media] 📥 Starting background cache download for single-video playlist`);
+            this.downloadInProgress.add(item.MediaRef);
+            
+            cacheManager.downloadVideo(
+              item.MediaRef,
+              item.MediaPath,
+              (progress, loaded, total) => {
+                if (cacheManager.shouldLogProgress(item.MediaRef, progress)) {
+                  const downloadedMB = (loaded / 1024 / 1024).toFixed(1);
+                  const totalMB = (total / 1024 / 1024).toFixed(1);
+                  console.log(`[Cache] ${Math.floor(progress)}% - ${downloadedMB}MB / ${totalMB}MB`);
+                }
+              }
+            ).then(downloadedPath => {
+              if (downloadedPath) {
+                console.log(`[Media] ✓ Single video cached successfully - will use cache on next app launch`);
+                this.safeSetState(prev => ({
+                  sourceMap: { ...prev.sourceMap, [item.MediaRef]: downloadedPath }
+                }));
+              }
+            }).catch(error => {
+              console.log(`[Media] Cache download failed:`, error.message);
+            }).finally(() => {
+              this.downloadInProgress.delete(item.MediaRef);
+            });
+          }
         }
       } catch (e) {
         console.log('[Media] Cache check failed:', e);
@@ -673,6 +704,12 @@ class Media extends Component {
   preloadNextMedia = async () => {
     const { videos, currentVideo, preloadedMedia, isConnected } = this.state;
     if (!videos || videos.length === 0) return;
+    
+    // ✅ FIX: Skip preload for single-item playlists (next = current)
+    if (videos.length === 1) {
+      console.log('[Media] Skipping preload - single-item playlist (native repeat enabled)');
+      return;
+    }
 
     const nextIndex = (currentVideo + 1) % videos.length;
     const nextItem = videos[nextIndex];
@@ -697,18 +734,21 @@ class Media extends Component {
 
     // Videos
     if (nextItem.MediaType === 'video') {
-      // ✅ Only download during images, not during videos
-      const currentItem = videos[currentVideo];
-      if (currentItem?.MediaType === 'video') {
-        console.log('[Media] Skipping download - video currently playing');
-        // Still set the streaming URL so it can play
+      // ✅ REMOVED: Block on downloading during video playback
+      // Cache manager handles memory/network limits internally
+      
+      if (this.downloadInProgress.has(nextItem.MediaRef)) {
+        console.log(`[Media] Download already in progress: ${nextItem.MediaName}`);
+        return;
+      }
+      
+      // ✅ NEW: Enforce concurrent download limit for stability
+      if (this.downloadInProgress.size >= this.MAX_CONCURRENT_DOWNLOADS) {
+        console.log(`[Media] Max concurrent downloads (${this.MAX_CONCURRENT_DOWNLOADS}) reached, queueing: ${nextItem.MediaName}`);
+        // Set streaming URL so it can play while waiting
         this.safeSetState(prev => ({
           sourceMap: { ...prev.sourceMap, [nextItem.MediaRef]: nextItem.MediaPath }
         }));
-        return;
-      }
-
-      if (this.downloadInProgress.has(nextItem.MediaRef)) {
         return;
       }
 
@@ -745,10 +785,12 @@ class Media extends Component {
           nextItem.MediaRef,
           nextItem.MediaPath,
           (progress, loaded, total) => {
-            // ✅ NEW: Log every callback for better visibility
-            const downloadedMB = (loaded / 1024 / 1024).toFixed(1);
-            const totalMB = (total / 1024 / 1024).toFixed(1);
-            console.log(`[Cache] ${Math.floor(progress)}% - ${downloadedMB}MB / ${totalMB}MB`); 
+            // ✅ Use cache manager's throttled logging (every 10%)
+            if (cacheManager.shouldLogProgress(nextItem.MediaRef, progress)) {
+              const downloadedMB = (loaded / 1024 / 1024).toFixed(1);
+              const totalMB = (total / 1024 / 1024).toFixed(1);
+              console.log(`[Cache] ${Math.floor(progress)}% - ${downloadedMB}MB / ${totalMB}MB`);
+            }
           }
         ).then(downloadedPath => {
           if (downloadedPath) {
@@ -763,6 +805,9 @@ class Media extends Component {
           console.log(`[Media] Download failed, will stream: ${nextItem.MediaName}`, error);
         }).finally(() => {
           this.downloadInProgress.delete(nextItem.MediaRef);
+          
+          // ✅ NEW: Try to download next queued video now that a slot is free
+          setTimeout(() => this.preloadNextMedia(), 500);
         });
 
       } catch (error) {
@@ -781,13 +826,16 @@ class Media extends Component {
     const { currentVideo, videoKey, orientation, videos, sourceMap } = this.state;
     const isActive = role === 'current'; // FIX: Changed from 'active' to 'current'
     const isCurrent = videos.indexOf(item) === currentVideo;
+    
+    // ✅ FIX: Detect single-video playlist for seamless looping
+    const isSingleVideoPlaylist = videos.length === 1 && item.MediaType === 'video';
 
     if (!item) {
       console.log('[Media] renderStackedMedia: item is null/undefined');
       return null;
     }
 
-    console.log(`[Media] Rendering ${role} media:`, item.MediaName, 'isActive:', isActive, 'type:', item.MediaType);
+    console.log(`[Media] Rendering ${role} media:`, item.MediaName, 'isActive:', isActive, 'type:', item.MediaType, 'singleVideo:', isSingleVideoPlaylist);
 
     if (item.MediaType === 'video') {
       // ✅ FIX: Use sourceMap to get the URI (cached or streaming)
@@ -840,11 +888,11 @@ class Media extends Component {
             },
           ]}
           resizeMode="stretch"
-          repeat={false}
+          repeat={isSingleVideoPlaylist} // ✅ FIX: Use native repeat for single-video playlists
           paused={!isActive}
           muted={false}
           onLoad={(data) => this.onVideoLoad(data, item)}
-          onEnd={this.handleEnd}
+          onEnd={isSingleVideoPlaylist ? undefined : this.handleEnd} // ✅ FIX: Skip handleEnd for repeating videos
           onError={(error) => {
             console.log(`[Media] ❌ Video error (${item.MediaName}):`, error);
             
@@ -950,6 +998,25 @@ class Media extends Component {
 
   if (!videos || videos.length === 0) {
     console.log('[Media] No videos in playlist');
+    return;
+  }
+  
+  // ✅ FIX: For single-item playlists (images/gifs), handle loop without complex transition
+  if (videos.length === 1) {
+    const item = videos[0];
+    console.log('[Media] Single-item playlist loop:', item.MediaName);
+    
+    // Update loop count
+    const newLoopCount = playlistLoopCount + 1;
+    this.safeSetState({ playlistLoopCount: newLoopCount });
+    
+    // For images/gifs, restart the timer
+    if (item.MediaType === 'image' || item.MediaType === 'gif') {
+      const dur = item.Duration || 10;
+      this.startMediaTimer(dur);
+    }
+    
+    // Note: Videos with length=1 use repeat={true} and won't reach this code
     return;
   }
 

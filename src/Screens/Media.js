@@ -20,7 +20,7 @@ import {
 } from 'react-native-responsive-dimensions';
 import Video from 'react-native-video';
 import NetInfo from '../utils/safeNetInfo';
-
+import FastImage from 'react-native-fast-image'; // ✅ ADD THIS LINE
 import KeepAwake from 'react-native-keep-awake';
 import {connect} from 'react-redux';
 
@@ -951,7 +951,7 @@ class Media extends Component {
       const { width, height } = this.state;
       const imageSource = sourceMap[item.MediaRef] || item.MediaPath;
       
-      console.log(`[Media] Rendering image ${item.MediaName}, source: ${imageSource}, active: ${isActive}`);
+      console.log(`[Media] Rendering ${item.MediaType} ${item.MediaName}, source: ${imageSource}, active: ${isActive}`);
       
       const animatedStyle = {
         position: 'absolute',
@@ -964,30 +964,61 @@ class Media extends Component {
         zIndex: isActive ? 10 : 1,
       };
 
-      return (
-        <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
-          <Image
-            resizeMode={'stretch'}
-            source={{ uri: imageSource }}
-            onLoad={() => {
-              this.safeSetState(prev => ({
-                preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true }
-              }));
-              if (isCurrent) {
-                Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-                const dur = item.Duration || 10;
-                this.startMediaTimer(dur);
-              }
-            }}
-            onError={error => {
-              console.log('[Media] ✗ Image load error');
-              healthMonitor.reportMediaError(item.MediaName, error.nativeEvent?.error || 'image load error');
-              if (isCurrent) this.handleEnd();
-            }}
-            style={{ width, height }}
-          />
-        </Animated.View>
-      );
+      // ✅ Use FastImage for GIFs, regular Image for static images
+      if (item.MediaType === 'gif') {
+        return (
+          <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
+            <FastImage
+              source={{ 
+                uri: imageSource,
+                priority: FastImage.priority.high,
+              }}
+              resizeMode={FastImage.resizeMode.stretch}
+              onLoad={() => {
+                this.safeSetState(prev => ({
+                  preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true }
+                }));
+                if (isCurrent) {
+                  Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+                  const dur = item.Duration || 10;
+                  this.startMediaTimer(dur);
+                }
+              }}
+              onError={error => {
+                console.log(`[Media] ✗ GIF load error`);
+                healthMonitor.reportMediaError(item.MediaName, error?.nativeEvent?.error || 'GIF load error');
+                if (isCurrent) this.handleEnd();
+              }}
+              style={{ width, height }}
+            />
+          </Animated.View>
+        );
+      } else {
+        return (
+          <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
+            <Image
+              resizeMode={'stretch'}
+              source={{ uri: imageSource }}
+              onLoad={() => {
+                this.safeSetState(prev => ({
+                  preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true }
+                }));
+                if (isCurrent) {
+                  Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+                  const dur = item.Duration || 10;
+                  this.startMediaTimer(dur);
+                }
+              }}
+              onError={error => {
+                console.log(`[Media] ✗ Image load error`);
+                healthMonitor.reportMediaError(item.MediaName, error.nativeEvent?.error || 'Image load error');
+                if (isCurrent) this.handleEnd();
+              }}
+              style={{ width, height }}
+            />
+          </Animated.View>
+        );
+      }
     }
 
     return null;

@@ -29,11 +29,11 @@ android {
 
     namespace "com.ideogramtv"
     defaultConfig {
-        applicationId "com.ideogramtv"
+        applicationId "com.ideogram"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 24
-        versionName "1.0.24"
+        versionCode 30
+        versionName "1.2.0"
         
         // FIX: Ensure all architectures are included
         ndk {

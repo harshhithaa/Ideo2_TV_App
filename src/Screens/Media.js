@@ -950,9 +950,12 @@ class Media extends Component {
     if (item.MediaType === 'image' || item.MediaType === 'gif') {
       const { width, height } = this.state;
       const imageSource = sourceMap[item.MediaRef] || item.MediaPath;
-      
-      console.log(`[Media] Rendering ${item.MediaType} ${item.MediaName}, source: ${imageSource}, active: ${isActive}`);
-      
+
+      console.log(`[Media] Rendering ${item.MediaType} ${item.MediaName}, source: ${imageSource}, role: ${role}`);
+
+      // Choose opacity value based on role (current or next)
+      const opacityVal = role === 'current' ? this.currentOpacity : this.nextOpacity;
+
       const animatedStyle = {
         position: 'absolute',
         top: 0,
@@ -960,35 +963,37 @@ class Media extends Component {
         width,
         height,
         backgroundColor: '#000',
-        opacity: isActive ? this.currentOpacity : 0,
-        zIndex: isActive ? 10 : 1,
+        opacity: opacityVal,
+        zIndex: role === 'next' ? 11 : 10,
       };
 
-      // ✅ Use FastImage for GIFs, regular Image for static images
+      // Load handlers: only start timer when the displayed (current) image finishes loading
+      const onLoadHandler = () => {
+        this.safeSetState(prev => ({
+          preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true }
+        }));
+
+        if (role === 'current') {
+          try { Animated.timing(this.currentOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start(); } catch (e) {}
+          const dur = item.Duration || 10;
+          this.startMediaTimer(dur);
+        }
+      };
+
+      const onErrorHandler = (error) => {
+        console.log(`[Media] ✗ Image/GIF load error`);
+        healthMonitor.reportMediaError(item.MediaName, error?.nativeEvent?.error || 'Image/GIF load error');
+        if (role === 'current') this.handleEnd();
+      };
+
       if (item.MediaType === 'gif') {
         return (
           <Animated.View style={animatedStyle} key={`${role}-${item.MediaRef}`}>
             <FastImage
-              source={{ 
-                uri: imageSource,
-                priority: FastImage.priority.high,
-              }}
+              source={{ uri: imageSource, priority: FastImage.priority.high }}
               resizeMode={FastImage.resizeMode.stretch}
-              onLoad={() => {
-                this.safeSetState(prev => ({
-                  preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true }
-                }));
-                if (isCurrent) {
-                  Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-                  const dur = item.Duration || 10;
-                  this.startMediaTimer(dur);
-                }
-              }}
-              onError={error => {
-                console.log(`[Media] ✗ GIF load error`);
-                healthMonitor.reportMediaError(item.MediaName, error?.nativeEvent?.error || 'GIF load error');
-                if (isCurrent) this.handleEnd();
-              }}
+              onLoad={onLoadHandler}
+              onError={onErrorHandler}
               style={{ width, height }}
             />
           </Animated.View>
@@ -999,21 +1004,8 @@ class Media extends Component {
             <Image
               resizeMode={'stretch'}
               source={{ uri: imageSource }}
-              onLoad={() => {
-                this.safeSetState(prev => ({
-                  preloadedMedia: { ...prev.preloadedMedia, [item.MediaRef]: true }
-                }));
-                if (isCurrent) {
-                  Animated.timing(this.currentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-                  const dur = item.Duration || 10;
-                  this.startMediaTimer(dur);
-                }
-              }}
-              onError={error => {
-                console.log(`[Media] ✗ Image load error`);
-                healthMonitor.reportMediaError(item.MediaName, error.nativeEvent?.error || 'Image load error');
-                if (isCurrent) this.handleEnd();
-              }}
+              onLoad={onLoadHandler}
+              onError={onErrorHandler}
               style={{ width, height }}
             />
           </Animated.View>
@@ -1131,6 +1123,67 @@ class Media extends Component {
   }
 
   console.log(`[Media] Advancing: ${currentVideo} → ${nextIndex} (${nextItem?.MediaName})`);
+  // If both current and next are images/GIFs, perform a crossfade instead of instant swap
+  if ((currentItem?.MediaType === 'image' || currentItem?.MediaType === 'gif') &&
+      (nextItem?.MediaType === 'image' || nextItem?.MediaType === 'gif')) {
+
+    const nextRef = nextItem?.MediaRef;
+    const alreadyPreloaded = this.state.preloadedMedia && this.state.preloadedMedia[nextRef];
+
+    // Helper: attempt prefetch with short timeout (best-effort)
+    const tryPrefetchWithTimeout = (uri, timeoutMs = 1500) => {
+      return new Promise(resolve => {
+        let done = false;
+        Image.prefetch(uri)
+          .then(() => { done = true; resolve(true); })
+          .catch(() => { done = true; resolve(false); });
+        setTimeout(() => { if (!done) resolve(false); }, timeoutMs);
+      });
+    };
+
+    try {
+      if (!alreadyPreloaded) {
+        // Best-effort prefetch; don't block long
+        await tryPrefetchWithTimeout(nextItem.MediaPath, 1500);
+        // Mark preloaded if possible
+        this.safeSetState(prev => ({
+          preloadedMedia: { ...prev.preloadedMedia, [nextRef]: true },
+          sourceMap: { ...prev.sourceMap, [nextRef]: nextItem.MediaPath }
+        }));
+      }
+
+      // Prepare opacities for crossfade
+      try { this.nextOpacity.setValue(0); this.currentOpacity.setValue(1); } catch (e) {}
+
+      // Crossfade in parallel
+      Animated.parallel([
+        Animated.timing(this.nextOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(this.currentOpacity, { toValue: 0, duration: 400, useNativeDriver: true })
+      ]).start(() => {
+        // After animation, switch active index and reset opacities
+        this.safeSetState({ currentVideo: nextIndex }, () => {
+          healthMonitor.updateMedia(nextItem?.MediaName || 'Unknown', nextIndex);
+          updateHeartbeatData({ currentMedia: nextItem?.MediaName || 'Unknown', mediaIndex: nextIndex });
+
+          try { this.currentOpacity.setValue(1); this.nextOpacity.setValue(0); } catch (e) {}
+
+          // Start timer for the newly visible image
+          if (nextItem?.MediaType === 'image' || nextItem?.MediaType === 'gif') {
+            const dur = nextItem.Duration || 10;
+            this.startMediaTimer(dur);
+          }
+
+          // Preload subsequent media
+          setTimeout(() => this.preloadNextMedia(), 300);
+        });
+      });
+
+      return; // crossfade handled; skip default instant swap
+    } catch (e) {
+      console.log('[Media] Crossfade failed, falling back to instant swap:', e);
+      // fall through to default behavior
+    }
+  }
 
   this.safeSetState({ currentVideo: nextIndex });
 
@@ -1144,7 +1197,7 @@ class Media extends Component {
     mediaIndex: nextIndex,
   });
 
-  // ✅ CRITICAL FIX: Just preload the next item, DON'T reset the entire playlist
+  // ✅ CRITICAL: Just preload the next item, DON'T reset the entire playlist
   await this.preloadFirstMedia(nextItem);
   
   // ✅ Start timer for images (videos start their own timer in onVideoLoad)
@@ -1245,9 +1298,23 @@ class Media extends Component {
 
     // ✅ REMOVED: Caching indicator (no longer shown on screen)
     
+    // If both current and next are images/GIFs, render both layers for crossfade
+    const bothImages = currentItem && nextItem &&
+      (currentItem.MediaType === 'image' || currentItem.MediaType === 'gif') &&
+      (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif');
+
     return (
       <View style={{ flex: 1, width, height, backgroundColor: '#000' }}>
-        {this.renderStackedMedia(currentItem, 'current')}
+        {bothImages ? (
+          // Render current underneath and next on top (opacities drive visibility)
+          <>
+            {this.renderStackedMedia(currentItem, 'current')}
+            {this.renderStackedMedia(nextItem, 'next')}
+          </>
+        ) : (
+          // Default: render only the current media (videos unaffected)
+          this.renderStackedMedia(currentItem, 'current')
+        )}
       </View>
     );
   };

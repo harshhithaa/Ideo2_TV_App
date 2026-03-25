@@ -880,8 +880,8 @@ class Media extends Component {
               position: 'absolute',
               top: 0,
               left: 0,
-              width: width,
-              height: height,
+              right: 0,
+              bottom: 0,
               backgroundColor: '#000',
               opacity: isActive ? 1 : 0,
               zIndex: isActive ? 10 : 1,
@@ -960,8 +960,8 @@ class Media extends Component {
         position: 'absolute',
         top: 0,
         left: 0,
-        width,
-        height,
+        right: 0,
+        bottom: 0,
         backgroundColor: '#000',
         opacity: opacityVal,
         zIndex: role === 'next' ? 11 : 10,
@@ -994,7 +994,7 @@ class Media extends Component {
               resizeMode={FastImage.resizeMode.stretch}
               onLoad={onLoadHandler}
               onError={onErrorHandler}
-              style={{ width, height }}
+              style={{ width: '100%', height: '100%' }}
             />
           </Animated.View>
         );
@@ -1006,7 +1006,7 @@ class Media extends Component {
               source={{ uri: imageSource }}
               onLoad={onLoadHandler}
               onError={onErrorHandler}
-              style={{ width, height }}
+              style={{ width: '100%', height: '100%' }}
             />
           </Animated.View>
         );
@@ -1304,7 +1304,7 @@ class Media extends Component {
       (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif');
 
     return (
-      <View style={{ flex: 1, width, height, backgroundColor: '#000' }}>
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
         {bothImages ? (
           // Render current underneath and next on top (opacities drive visibility)
           <>

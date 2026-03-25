@@ -3,6 +3,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Declare this is a TV app -->
     <uses-feature
@@ -35,5 +40,34 @@
             <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
         </intent-filter>
       </activity>
+      <!-- Auto-start on boot for Android TV and Android Box devices only -->
+      <receiver
+          android:name=".BootReceiver"
+          android:enabled="true"
+          android:exported="true"
+          android:directBootAware="true">
+          <intent-filter>
+              <action android:name="android.intent.action.BOOT_COMPLETED" />
+              <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+              <action android:name="android.intent.action.USER_UNLOCKED" />
+              <action android:name="android.intent.action.USER_PRESENT" />
+              <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+              <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+              <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+              <category android:name="android.intent.category.DEFAULT" />
+          </intent-filter>
+      </receiver>
+
+      <receiver
+          android:name=".BootRetryReceiver"
+          android:enabled="true"
+          android:exported="false"
+          android:directBootAware="true" />
+
+      <service
+          android:name=".AutoStartService"
+          android:enabled="true"
+          android:exported="false"
+          android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

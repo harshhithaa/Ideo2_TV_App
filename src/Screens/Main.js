@@ -293,9 +293,9 @@ class Main extends Component {
           opacity: this.nextOpacity
         }}>
           {next && (next.MediaType === 'image' || next.MediaType === 'gif') ? (
-            <FastImage source={{ uri: next.MediaPath }} style={{ width: this.state.width, height: this.state.height }} />
+            <FastImage source={{ uri: next.MediaPath }} style={{ width: '100%', height: '100%' }} />
           ) : next && next.MediaType === 'video' ? (
-            <Video source={{ uri: next?.MediaPath || null }} style={{ width: this.state.width, height: this.state.height }} />
+            <Video source={{ uri: next?.MediaPath || null }} style={{ width: '100%', height: '100%' }} />
           ) : null}
         </Animated.View>
 
@@ -307,7 +307,7 @@ class Main extends Component {
           {current && (current.MediaType === 'image' || current.MediaType === 'gif') ? (
             <FastImage
               source={{ uri: current.MediaPath }}
-              style={{ width: this.state.width, height: this.state.height }}
+              style={{ width: '100%', height: '100%' }}
               onLoad={() => {
                 healthMonitor.clearError('media_load');
                 this.startMediaTimer(current.Duration || current.MediaDuration || 5);
@@ -338,7 +338,7 @@ class Main extends Component {
                }}
                onProgress={(progress) => { healthMonitor.updatePlaybackPosition(progress.currentTime); }}
                onError={(err) => { healthMonitor.reportMediaError(current.MediaName, JSON.stringify(err)); this.handleEnd(); }}
-               style={{ width: this.state.width, height: this.state.height }}
+               style={{ width: '100%', height: '100%' }}
              />
           ) : null}
         </Animated.View>

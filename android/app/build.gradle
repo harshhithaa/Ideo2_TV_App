@@ -32,8 +32,8 @@ android {
         applicationId "com.ideogramtv"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 27
-        versionName "1.0.27"
+        versionCode 28
+        versionName "1.0.28"
         
         // FIX: Ensure all architectures are included
         ndk {

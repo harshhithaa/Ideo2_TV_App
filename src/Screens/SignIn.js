@@ -152,7 +152,7 @@ class PhoneAuth extends Component {
           <View style={styles.splitRow}>
             <View style={styles.leftCol}>
               <View style={styles.leftContent}>
-                <Image source={logo} style={styles.logo} />
+                <Image source={logo} style={styles.logo} resizeMode="contain" />
                 <Text style={styles.welcomeTitle}>Welcome to Ideogram</Text>
                 <Text style={styles.welcomeDesc}>
                   Manage your digital displays with ease. Control content, schedules, and monitors from one central platform.
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
   splitRow: { flex: 1, flexDirection: 'row' },
   leftCol: { flex: 1, backgroundColor: '#f5f5f5', justifyContent: 'center', alignItems: 'center' },
   leftContent: { width: '80%', alignItems: 'center' },
-  logo: { width: responsiveWidth(46), height: responsiveHeight(30), resizeMode: 'contain', marginBottom: 18 },
+  logo: { width: 280, height: 180, marginBottom: 24 },
   welcomeTitle: { fontSize: responsiveFontSize(1.8), fontWeight: '700', color: '#333', marginBottom: 8 },
   welcomeDesc: { fontSize: responsiveFontSize(1.5), color: '#666', textAlign: 'center', lineHeight: 20 },
   rightCol: { flex: 1, backgroundColor: '#ffffff', justifyContent: 'center', paddingHorizontal: responsiveWidth(8) },

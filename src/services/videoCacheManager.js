@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 const CACHE_CONFIG = {
   MAX_CACHE_SIZE: 25 * 1024 * 1024 * 1024, // ✅ 25GB (up from 5GB)
   CLEANUP_AGE_DAYS: 30, // ✅ 30 days (up from 7 days) - keep videos longer
-  MIN_FREE_SPACE: 2 * 1024 * 1024 * 1024, // ✅ Always keep 2GB free for OS
+  MIN_FREE_SPACE: 512 * 1024 * 1024, // ✅ Keep 512MB free for OS on low-RAM devices
 };
 
 const getBaseCachePath = () => {
@@ -152,7 +152,7 @@ class VideoCacheManager {
     try {
       const fsInfo = await RNFS.getFSInfo();
       const freeSpace = fsInfo.freeSpace;
-      const requiredSpace = fileSize + CACHE_CONFIG.MIN_FREE_SPACE; // File size + 2GB buffer
+      const requiredSpace = fileSize + CACHE_CONFIG.MIN_FREE_SPACE; // File size + buffer
       
       if (freeSpace < requiredSpace) {
         const freeGB = (freeSpace / 1024 / 1024 / 1024).toFixed(2);
@@ -179,7 +179,7 @@ class VideoCacheManager {
     const fileSize = await this.getFileSize(mediaRef, mediaPath);
     
     // ✅ ENHANCED: More aggressive size limit for stability
-    const MAX_CACHEABLE_SIZE = 800 * 1024 * 1024; // 800MB (down from 1GB)
+    const MAX_CACHEABLE_SIZE = 300 * 1024 * 1024; // 300MB for low-RAM devices
     if (fileSize > MAX_CACHEABLE_SIZE) {
       const sizeGB = (fileSize / 1024 / 1024 / 1024).toFixed(2);
       console.log(`[Cache] ⚠️ File too large to cache: ${sizeGB}GB, streaming instead`);

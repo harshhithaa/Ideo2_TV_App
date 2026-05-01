@@ -169,6 +169,26 @@ class Media extends Component {
     }
   }
 
+  pruneStateCache = () => {
+    const { videos, currentVideo, preloadedMedia, sourceMap } = this.state;
+    if (!videos || videos.length === 0) return;
+
+    const keepRefs = new Set();
+    const nextIndex = (currentVideo + 1) % videos.length;
+    if (videos[currentVideo]) keepRefs.add(videos[currentVideo].MediaRef);
+    if (videos[nextIndex]) keepRefs.add(videos[nextIndex].MediaRef);
+
+    const newPreloaded = {};
+    const newSourceMap = {};
+
+    for (const ref of keepRefs) {
+      if (preloadedMedia[ref] !== undefined) newPreloaded[ref] = preloadedMedia[ref];
+      if (sourceMap[ref] !== undefined) newSourceMap[ref] = sourceMap[ref];
+    }
+
+    this.safeSetState({ preloadedMedia: newPreloaded, sourceMap: newSourceMap });
+  };
+
   componentDidMount = async () => {
     console.log('[Media] Component mounted');
     
@@ -183,22 +203,15 @@ class Media extends Component {
 
     // ✅ CRITICAL: Periodic memory cleanup for long-running TV app
     this.memoryCleanupInterval = setInterval(() => {
-      console.log('[Media] 🧹 Periodic memory cleanup triggered');
-      
+      this.pruneStateCache();
+
       // Force garbage collection (Android only)
       if (global.gc) {
         try {
           global.gc();
-          console.log('[Media] ✓ Garbage collection executed');
         } catch (e) {}
       }
-      
-      // Log cache stats for monitoring
-      cacheManager.getCacheStats().then(stats => {
-        console.log(`[Media] Cache status: ${stats.count} files, ${stats.sizeGB}GB / ${stats.maxSizeGB}GB`);
-      }).catch(e => {});
-      
-    }, 10 * 60 * 1000); // Every 10 minutes
+    }, 2 * 60 * 1000); // Every 2 minutes
 
     this._mounted = true;
     StatusBar.setHidden(true);
@@ -265,7 +278,7 @@ class Media extends Component {
     this.getdta();
 
     if (!this.interval) {
-      this.interval = setInterval(() => this.getdta(), 30000);
+      this.interval = setInterval(() => this.getdta(), 60000);
     }
 
     // Schedule periodic cache cleanup (every 24 hours)
@@ -702,7 +715,7 @@ class Media extends Component {
 
   // ✅ ENHANCED: preloadNextMedia with cache manager + background download
   preloadNextMedia = async () => {
-    const { videos, currentVideo, preloadedMedia, isConnected } = this.state;
+    const { videos, currentVideo, preloadedMedia, sourceMap, isConnected } = this.state;
     if (!videos || videos.length === 0) return;
     
     // ✅ FIX: Skip preload for single-item playlists (next = current)
@@ -717,7 +730,7 @@ class Media extends Component {
 
     // Images
     if (nextItem.MediaType === 'image' || nextItem.MediaType === 'gif') {
-      if (!preloadedMedia[nextItem.MediaRef]) {
+      if (!preloadedMedia[nextItem.MediaRef] && !sourceMap[nextItem.MediaRef]) {
         console.log(`[Media] Preloading next image: ${nextItem.MediaName}`);
         Image.prefetch(nextItem.MediaPath)
           .then(() => {
@@ -848,20 +861,20 @@ class Media extends Component {
       
       // ✅ CRITICAL: Adjust buffer config based on file size
       const bufferConfig = isHugeFile ? {
-        minBufferMs: 3000,      // Minimal buffering for huge files
-        maxBufferMs: 10000,
-        bufferForPlaybackMs: 1500,
-        bufferForPlaybackAfterRebufferMs: 2500,
+        minBufferMs: 1000,
+        maxBufferMs: 5000,
+        bufferForPlaybackMs: 500,
+        bufferForPlaybackAfterRebufferMs: 1000,
       } : isLargeFile ? {
-        minBufferMs: 5000,      // Reduced buffering for large files
-        maxBufferMs: 15000,
-        bufferForPlaybackMs: 2000,
-        bufferForPlaybackAfterRebufferMs: 3000,
+        minBufferMs: 2000,
+        maxBufferMs: 8000,
+        bufferForPlaybackMs: 1000,
+        bufferForPlaybackAfterRebufferMs: 2000,
       } : {
-        minBufferMs: 15000,     // Normal buffering for small files
-        maxBufferMs: 50000,
-        bufferForPlaybackMs: 5000,
-        bufferForPlaybackAfterRebufferMs: 10000,
+        minBufferMs: 8000,
+        maxBufferMs: 20000,
+        bufferForPlaybackMs: 2000,
+        bufferForPlaybackAfterRebufferMs: 4000,
       };
 
       const { width, height } = this.state;
@@ -1174,6 +1187,7 @@ class Media extends Component {
           }
 
           // Preload subsequent media
+          this.pruneStateCache();
           setTimeout(() => this.preloadNextMedia(), 300);
         });
       });
@@ -1207,6 +1221,7 @@ class Media extends Component {
   }
   
   // ✅ Preload the item after next
+  this.pruneStateCache();
   setTimeout(() => this.preloadNextMedia(), 300);
 };
   componentWillUnmount = async () => {
